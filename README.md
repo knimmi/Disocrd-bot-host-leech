@@ -37,7 +37,6 @@ npm install
 
 Run the following script in your SQL client to create the required table and indexes:
 
-```sql
 CREATE TABLE IF NOT EXISTS mission_history (
     id INT AUTO_INCREMENT PRIMARY KEY,
     userId VARCHAR(20) NOT NULL,            -- The Discord User ID
