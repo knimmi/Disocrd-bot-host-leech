@@ -2,25 +2,24 @@
   "name": "hosting-bot",
   "version": "1.0.0",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "src/index.ts",
   "scripts": {
-    "dev": "ts-node src/index.ts",
+    "dev": "tsx src/index.ts",
+    "taxi": "tsx src/fortnite/taxi.ts",
+    "get-auth": "tsx src/fortnite/get-auth-axios.ts",
     "build": "tsc",
     "start": "node dist/index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "Discord bot for STW mission hosting and leeching tracking",
   "dependencies": {
+    "axios": "^1.6.7",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "fnbr": "^4.1.2",
-    "mysql2": "^3.16.0"
+    "mysql2": "^3.9.1"
   },
   "devDependencies": {
     "@types/node": "^20.11.24",
-    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   }
 }
