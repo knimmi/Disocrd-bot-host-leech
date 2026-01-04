@@ -1,177 +1,92 @@
-import { 
-    Client, 
-    GatewayIntentBits, 
-    Message, 
-    REST, 
-    Routes, 
-    SlashCommandBuilder, 
-    EmbedBuilder 
-} from 'discord.js';
-import mysql from 'mysql2/promise';
+import { Client, GatewayIntentBits, Collection, REST, Routes } from 'discord.js';
 import * as dotenv from 'dotenv';
+
+// Import commands
+import * as stats from './commands/stats.js';
+import * as monthly from './commands/monthly.js';
+import * as leaderboard from './commands/leaderboard.js';
+import { recordMission } from './database.js';
 
 dotenv.config();
 
-const TOKEN = process.env.BOT_TOKEN as string; 
+const TOKEN = process.env.BOT_TOKEN as string;
 const CLIENT_ID = process.env.CLIENT_ID as string;
-
-// Database Connection Pool
-const pool = mysql.createPool({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASS,
-    database: process.env.DB_NAME,
-    waitForConnections: true,
-    connectionLimit: 10
-});
-
-const TRACKED_ROLE_IDS = [
-    '1457117829340856546', // @ping-missions
-    '1457117863398605044', // @ping-ventures
-    '1457117897578254518'  // @ping-homebase
-];
+const TRACKING_CHANNEL_ID = process.env.TRACKING_CHANNEL_ID as string; 
+const TRACKED_ROLE_IDS = ['1457117829340856546', '1457117863398605044', '1457117897578254518', "963751483856281621"];
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent, 
+        GatewayIntentBits.MessageContent,
     ],
 });
 
-// Register Commands
-const commands = [
-    new SlashCommandBuilder()
-        .setName('stats')
-        .setDescription('Show STW mission stats for a user')
-        .addUserOption(opt => opt.setName('target').setDescription('The user to check')),
-    new SlashCommandBuilder()
-        .setName('monthly')
-        .setDescription('Show top 10 hosts for THIS month'),
-    new SlashCommandBuilder()
-        .setName('leaderboard')
-        .setDescription('Show global mission stats and top 10 hosts')
-].map(cmd => cmd.toJSON());
+// Command Handling
+const commands = new Collection<string, any>();
+commands.set(stats.data.name, stats);
+commands.set(monthly.data.name, monthly);
+commands.set(leaderboard.data.name, leaderboard);
 
+// Register Slash Commands
 const rest = new REST({ version: '10' }).setToken(TOKEN!);
 
 (async () => {
     try {
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commands });
-        console.log('✅ Commands Registered');
+        const commandData = Array.from(commands.values()).map(cmd => cmd.data.toJSON());
+        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commandData });
+        console.log('✅ Slash Commands Registered');
     } catch (e) { console.error(e); }
 })();
 
+// Interaction Handler
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    const command = commands.get(interaction.commandName);
+    if (!command) return;
 
-    // --- Stats Command ---
-    if (interaction.commandName === 'stats') {
-        const target = interaction.options.getUser('target') || interaction.user;
-        
-        // Fetch counts from MySQL
-        const [rows] = await pool.execute(
-            'SELECT type, COUNT(*) as count FROM mission_history WHERE userId = ? GROUP BY type',
-            [target.id]
-        ) as any;
-
-        let hosts = 0;
-        let leeches = 0;
-        rows.forEach((row: any) => {
-            if (row.type === 'host') hosts = row.count;
-            if (row.type === 'leech') leeches = row.count;
-        });
-
-        const total = hosts + leeches;
-        const hRatio = total > 0 ? Math.round((hosts / total) * 100) : 0;
-        const lRatio = total > 0 ? Math.round((leeches / total) * 100) : 0;
-
-        const embed = new EmbedBuilder()
-            .setColor(0x2B2D31)
-            .setTitle(`Stats for: ${target.username}`)
-            .addFields(
-                { name: 'Hosted:', value: `${hosts} Missions` },
-                { name: 'Leeched:', value: `${leeches} Missions` },
-                { name: 'Ratio', value: `\`${hRatio}%\` — \`${lRatio}%\` !` }
-            )
-            .setFooter({ text: 'Code vasebreakers' });
-
-        await interaction.reply({ embeds: [embed] });
-    }
-
-    // --- Monthly Leaderboard ---
-    if (interaction.commandName === 'monthly') {
-        const [rows] = await pool.execute(
-            'SELECT userId, COUNT(*) as count FROM mission_history WHERE timestamp >= ? AND type = "host" GROUP BY userId ORDER BY count DESC LIMIT 10',
-            [startOfMonth]
-        ) as any;
-
-        const lbText = rows.map((row: any, i: number) => `**${i + 1}.** <@${row.userId}> — \`${row.count}\` hosts`).join('\n');
-
-        const embed = new EmbedBuilder()
-            .setColor(0x5865F2)
-            .setTitle(`📅 Top Hosts - ${now.toLocaleString('en-US', { month: 'long' })}`)
-            .setDescription(lbText || "No missions hosted this month yet!")
-            .setFooter({ text: 'Code vasebreakers' });
-        await interaction.reply({ embeds: [embed] });
-    }
-
-    // --- Global Leaderboard ---
-    if (interaction.commandName === 'leaderboard') {
-        const [[{ total }]] = await pool.execute('SELECT COUNT(*) as total FROM mission_history WHERE type = "host"') as any;
-        const [rows] = await pool.execute(
-            'SELECT userId, COUNT(*) as count FROM mission_history WHERE type = "host" GROUP BY userId ORDER BY count DESC LIMIT 10'
-        ) as any;
-
-        const lbText = rows.map((row: any, i: number) => `**${i + 1}.** <@${row.userId}> — \`${row.count}\` hosts`).join('\n');
-
-        const embed = new EmbedBuilder()
-            .setColor(0xFFA500)
-            .setTitle('🏆 Global Mission Leaderboard')
-            .setDescription(`A total of **${total}** missions have been hosted!`)
-            .addFields({ name: 'Top 10 Mission Hosts', value: lbText || 'No data yet.' })
-            .setFooter({ text: 'Code vasebreakers' })
-            .setTimestamp();
-
-        await interaction.reply({ embeds: [embed] });
+    try {
+        // Execute the logic found in the specific command file
+        await command.execute(interaction);
+    } catch (error) {
+        console.error(error);
+        await interaction.reply({ content: '❌ Error executing this command!', ephemeral: true });
     }
 });
 
-client.on('messageCreate', async (message: Message) => {
+// Message Handler
+client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.guild) return;
+    
+    // Only track in the specified channel
+    if (message.channelId !== TRACKING_CHANNEL_ID) return;
 
     const userId = message.author.id;
+    const content = message.content.toLowerCase();
 
     // Track Hosting
     if (message.mentions.roles.some(r => TRACKED_ROLE_IDS.includes(r.id))) {
-        await pool.execute('INSERT INTO mission_history (userId, type, timestamp) VALUES (?, "host", ?)', [userId, Date.now()]);
-
-        const [[{ count }]] = await pool.execute('SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = "host"', [userId]) as any;
-
+        const hostCount = await recordMission(userId, 'host');
         await message.reply({
-            content: `-# ✅ Mission tracked! You have now hosted **${count}** missions.`,
+            content: `-# You have now hosted **${hostCount}** missions.`,
             allowedMentions: { repliedUser: false }
         });
+        return;
     }
 
     // Track Leeching
-    if (message.content.toLowerCase() === 'omw' && message.reference) {
-        await pool.execute('INSERT INTO mission_history (userId, type, timestamp) VALUES (?, "leech", ?)', [userId, Date.now()]);
-
-        const [[{ count }]] = await pool.execute('SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = "leech"', [userId]) as any;
-
+    if (content === 'omw' || (content.includes('omw') && message.reference)) {
+        const leechCount = await recordMission(userId, 'leech');
         await message.reply({
-            content: `-# ✅ Leech recorded! You have now leeched **${count}** missions.`,
+            content: `-# You have now leeched **${leechCount}** missions.`,
             allowedMentions: { repliedUser: false }
         });
     }
 });
 
 client.once('ready', () => {
-    console.log(`✅ Bot Online as ${client.user?.tag} (MySQL Connected)`);
+    console.log(`✅ Bot Online as ${client.user?.tag} (Modular Mode)`);
 });
 
 client.login(TOKEN);

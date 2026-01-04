@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+
+# Environment variables (Crucial for security)
+.env
+
+# Build files
+dist/
+build/
+*.tsbuildinfo
+
+# JSON files
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+
+# System files
+.DS_Store
+Thumbs.db
