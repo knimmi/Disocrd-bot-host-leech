@@ -21,7 +21,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setColor(0x5865F2)
         .setTitle(`📅 Top Hosts - ${now.toLocaleString('en-US', { month: 'long' })}`)
         .setDescription(lbText || "No missions hosted this month yet!")
-        .setFooter({ text: 'Code vasebreakers' });
 
     await interaction.reply({ embeds: [embed] });
 }

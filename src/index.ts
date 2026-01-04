@@ -1,10 +1,6 @@
 import { Client, GatewayIntentBits, Collection, REST, Routes } from 'discord.js';
 import * as dotenv from 'dotenv';
-
-// Import commands
-import * as stats from './commands/stats.js';
-import * as monthly from './commands/monthly.js';
-import * as leaderboard from './commands/leaderboard.js';
+import { commands, commandModules } from './command_list.js';
 import { recordMission } from './database.js';
 
 dotenv.config();
@@ -22,36 +18,31 @@ const client = new Client({
     ],
 });
 
-// Command Handling
-const commands = new Collection<string, any>();
-commands.set(stats.data.name, stats);
-commands.set(monthly.data.name, monthly);
-commands.set(leaderboard.data.name, leaderboard);
+const commandCollection = new Collection<string, any>();
+Object.values(commandModules).forEach(mod => {
+    commandCollection.set(mod.data.name, mod);
+});
 
 // Register Slash Commands
-const rest = new REST({ version: '10' }).setToken(TOKEN!);
-
+const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN!);
 (async () => {
     try {
-        const commandData = Array.from(commands.values()).map(cmd => cmd.data.toJSON());
-        await rest.put(Routes.applicationCommands(CLIENT_ID), { body: commandData });
-        console.log('✅ Slash Commands Registered');
+        await rest.put(Routes.applicationCommands(process.env.CLIENT_ID!), { body: commands });
+        console.log('✅ Commands Initialized');
     } catch (e) { console.error(e); }
 })();
 
 // Interaction Handler
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-
-    const command = commands.get(interaction.commandName);
+    const command = commandCollection.get(interaction.commandName);
     if (!command) return;
 
     try {
-        // Execute the logic found in the specific command file
         await command.execute(interaction);
     } catch (error) {
         console.error(error);
-        await interaction.reply({ content: '❌ Error executing this command!', ephemeral: true });
+        await interaction.reply({ content: '❌ Error executing command.', ephemeral: true });
     }
 });
 

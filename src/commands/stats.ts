@@ -19,9 +19,9 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .addFields(
             { name: 'Hosted:', value: `${hosts} Missions`, inline: true },
             { name: 'Leeched:', value: `${leeches} Missions`, inline: true },
+            { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Ratio', value: `\`${hRatio}%\` — \`${lRatio}%\` !` }
         )
-        .setFooter({ text: 'Code vasebreakers' });
 
     await interaction.reply({ embeds: [embed] });
 }

@@ -19,7 +19,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle('🏆 Global Mission Leaderboard')
         .setDescription(`A total of **${totalGlobal}** missions have been hosted!`)
         .addFields({ name: 'Top 10 Mission Hosts', value: lbText || 'No data yet.' })
-        .setFooter({ text: 'Code vasebreakers' })
         .setTimestamp();
 
     await interaction.reply({ embeds: [embed] });

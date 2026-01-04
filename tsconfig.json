@@ -14,16 +14,17 @@
     /* Other Outputs */
     "sourceMap": true,
     "declaration": true,
+    "removeComments": true,
 
     /* Typechecking Options */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
 
-    /* Interop & Modern Syntax */
+    /* Interop & Syntax */
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
-    "verbatimModuleSyntax": false,
+    "verbatimModuleSyntax": true,
     "moduleDetection": "force"
   },
   "include": ["src/**/*"],
