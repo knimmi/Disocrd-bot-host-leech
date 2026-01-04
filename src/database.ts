@@ -16,20 +16,51 @@ export const pool = mysql.createPool({
 });
 
 /**
- * Records a mission event and returns the current count for milestone checking.
+ * Records multiple missions in a single query for high-performance bulk updates.
+ */
+export async function recordMultipleMissions(
+  userId: string,
+  type: "host" | "leech",
+  amount: number
+): Promise<number> {
+  const now = Date.now();
+
+  // 1. Prepare the bulk data array [[userId, type, timestamp, null], ...]
+  const values = Array.from({ length: amount }, () => [
+    userId,
+    type,
+    now,
+    null, // No messageId for bulk admin additions
+  ]);
+
+  // 2. Execute Bulk Insert using .query (not .execute) because .query supports arrays
+  await pool.query(
+    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES ?",
+    [values]
+  );
+
+  // 3. Fetch the updated total count
+  const [[{ count }]] = (await pool.execute(
+    "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?",
+    [userId, type]
+  )) as any;
+
+  return count;
+}
+
+/**
+ * Records a single mission event (used for message tracking).
  */
 export async function recordMission(
   userId: string,
   type: "host" | "leech",
   messageId?: string
 ) {
-  // Insert the new record with messageId
   await pool.execute(
     "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES (?, ?, ?, ?)",
     [userId, type, Date.now(), messageId || null]
   );
 
-  // Fetch the updated total count for this user and type
   const [[{ count }]] = (await pool.execute(
     "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?",
     [userId, type]
@@ -71,7 +102,6 @@ export async function getUserStats(userId: string) {
 
 /**
  * Fetches the top 10 hosts based on a starting timestamp.
- * Use 0 for all-time global leaderboard.
  */
 export async function getLeaderboard(startTime: number = 0) {
   const [rows] = (await pool.execute(

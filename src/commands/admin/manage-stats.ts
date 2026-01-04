@@ -4,7 +4,7 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import { pool, recordMission } from "../../database";
+import { pool, recordMultipleMissions, getUserStats } from "../../database";
 import { checkMilestones } from "../../roles";
 
 export const data = new SlashCommandBuilder()
@@ -63,62 +63,65 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  // 1. Immediately acknowledge the command to prevent the 3-second timeout error
+  await interaction.deferReply({ ephemeral: true });
+
   const subcommand = interaction.options.getSubcommand();
   const target = interaction.options.getUser("target")!;
   const type = interaction.options.getString("type")! as "host" | "leech";
   const amount = interaction.options.getInteger("amount")!;
 
-  if (subcommand === "add") {
+  try {
     let finalCount = 0;
 
-    // Use recordMission in a loop to ensure milestones trigger correctly
-    for (let i = 0; i < amount; i++) {
-      finalCount = await recordMission(target.id, type);
+    if (subcommand === "add") {
+      // Use the bulk insertion function for speed
+      finalCount = await recordMultipleMissions(target.id, type, amount);
+    } else if (subcommand === "remove") {
+      // Delete the most recent records up to the specified amount
+      await pool.execute(
+        "DELETE FROM mission_history WHERE userId = ? AND type = ? ORDER BY timestamp DESC LIMIT ?",
+        [target.id, type, amount]
+      );
+
+      // Fetch the updated total after the records are deleted
+      const stats = await getUserStats(target.id);
+      finalCount = type === "host" ? stats.hosts : stats.leeches;
     }
 
-    // Check milestones for the member
+    // 2. Sync Roles (This now handles both Adding and Stripping roles)
     const member = await interaction.guild?.members.fetch(target.id);
     if (member) {
       const milestoneEmbed = await checkMilestones(member, finalCount, type);
-      if (milestoneEmbed && interaction.channel?.isTextBased()) {
+
+      // Only send the congratulatory message if they actually gained a NEW role
+      if (
+        milestoneEmbed &&
+        interaction.channel &&
+        "send" in interaction.channel
+      ) {
         await (interaction.channel as any).send({ embeds: [milestoneEmbed] });
       }
     }
 
+    // 3. Send the confirmation embed to the Admin
     const embed = new EmbedBuilder()
-      .setColor(0x00ff00)
-      .setTitle("Stats Updated")
+      .setColor(subcommand === "add" ? 0x00ff00 : 0xff0000)
+      .setTitle(`📈 Stats ${subcommand === "add" ? "Updated" : "Reduced"}`)
       .setDescription(
-        `Successfully **added** \`${amount}\` **${type}** to ${target.username}.`
+        `Successfully updated stats for **${target.username}**.\n\n` +
+          `**Action:** ${
+            subcommand === "add" ? "Added" : "Removed"
+          } \`${amount}\` ${type}(s)\n` +
+          `**New Total:** \`${finalCount}\``
       )
       .setTimestamp();
 
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-  }
-
-  if (subcommand === "remove") {
-    const [result] = (await pool.execute(
-      "DELETE FROM mission_history WHERE userId = ? AND type = ? ORDER BY timestamp DESC LIMIT ?",
-      [target.id, type, amount]
-    )) as any;
-
-    const deletedCount = result.affectedRows;
-
-    if (deletedCount === 0) {
-      return interaction.reply({
-        content: `❌ No **${type}** found for ${target.username}.`,
-        ephemeral: true,
-      });
-    }
-
-    const embed = new EmbedBuilder()
-      .setColor(0xff0000)
-      .setTitle("Stats Updated")
-      .setDescription(
-        `Successfully **removed** \`${deletedCount}\` **${type}** from ${target.username}.`
-      )
-      .setTimestamp();
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed] });
+  } catch (error) {
+    console.error("Error in manage-stats command:", error);
+    await interaction.editReply({
+      content: "❌ An error occurred while updating the database or roles.",
+    });
   }
 }
