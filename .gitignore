@@ -4,6 +4,10 @@ node_modules/
 # Environment variables (Crucial for security)
 .env
 
+# Fortnite / Taxi Files (Private)
+src/fortnite/
+credentials.json
+
 # Build files
 dist/
 build/
