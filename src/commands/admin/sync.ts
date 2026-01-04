@@ -1,10 +1,10 @@
 import { SlashCommandBuilder, EmbedBuilder, ChatInputCommandInteraction, PermissionFlagsBits, REST, Routes } from 'discord.js';
-import { pool } from '../database.js';
-import { commands } from '../command_list.js';
+import { pool } from '../../database.js';
+import { commands } from '../../command_list.js';
 
 export const data = new SlashCommandBuilder()
     .setName('sync')
-    .setDescription('Refreshes Slash Commands and checks database health')
+    .setDescription('Admin only: Sync commands and check DB health')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator); // Restricted to Admins
 
 export async function execute(interaction: ChatInputCommandInteraction) {
