@@ -18,11 +18,15 @@ export const pool = mysql.createPool({
 /**
  * Records a mission event and returns the current count for milestone checking.
  */
-export async function recordMission(userId: string, type: "host" | "leech") {
-  // Insert the new record
+export async function recordMission(
+  userId: string,
+  type: "host" | "leech",
+  messageId?: string
+) {
+  // Insert the new record with messageId
   await pool.execute(
-    "INSERT INTO mission_history (userId, type, timestamp) VALUES (?, ?, ?)",
-    [userId, type, Date.now()]
+    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES (?, ?, ?, ?)",
+    [userId, type, Date.now(), messageId || null]
   );
 
   // Fetch the updated total count for this user and type
@@ -32,6 +36,18 @@ export async function recordMission(userId: string, type: "host" | "leech") {
   )) as any;
 
   return count;
+}
+
+/**
+ * Deletes a mission record based on its associated Discord message ID.
+ */
+export async function deleteMissionByMessage(messageId: string) {
+  const [result] = (await pool.execute(
+    "DELETE FROM mission_history WHERE messageId = ?",
+    [messageId]
+  )) as any;
+
+  return result.affectedRows > 0;
 }
 
 /**

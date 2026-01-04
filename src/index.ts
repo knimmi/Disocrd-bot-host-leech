@@ -7,7 +7,7 @@ import {
 } from "discord.js";
 import * as dotenv from "dotenv";
 import { commands, commandModules } from "./command_list.js";
-import { recordMission } from "./database.js";
+import { recordMission, deleteMissionByMessage } from "./database.js";
 import { checkMilestones } from "./roles.js";
 
 dotenv.config();
@@ -70,9 +70,11 @@ client.on("messageCreate", async (message) => {
   if (message.channelId !== TRACKING_CHANNEL_ID) return;
   const userId = message.author.id;
   const content = message.content.toLowerCase();
+
   // Track Hosting
   if (message.mentions.roles.some((r) => TRACKED_ROLE_IDS.includes(r.id))) {
-    const hostCount = await recordMission(userId, "host");
+    const hostCount = await recordMission(userId, "host", message.id);
+
     // Check for hosting milestones
     if (message.member) {
       const milestoneEmbed = await checkMilestones(
@@ -93,7 +95,8 @@ client.on("messageCreate", async (message) => {
 
   // Track Leeching
   if (content === "omw" || (content.includes("omw") && message.reference)) {
-    const leechCount = await recordMission(userId, "leech");
+    const leechCount = await recordMission(userId, "leech", message.id);
+
     // Check for leeching milestones
     if (message.member) {
       const milestoneEmbed = await checkMilestones(
@@ -109,6 +112,21 @@ client.on("messageCreate", async (message) => {
       content: `-# You have now leeched **${leechCount}** missions.`,
       allowedMentions: { repliedUser: false },
     });
+  }
+});
+
+/**
+ * Message Delete Handler
+ */
+client.on("messageDelete", async (message) => {
+  if (message.channelId === TRACKING_CHANNEL_ID) {
+    // Call the database function to remove the record associated with this message ID
+    const deleted = await deleteMissionByMessage(message.id);
+    if (deleted) {
+      console.log(
+        `🗑️ Removed mission record for deleted message: ${message.id}`
+      );
+    }
   }
 });
 
