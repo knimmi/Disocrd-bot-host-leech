@@ -4,10 +4,15 @@ import {
   Collection,
   REST,
   Routes,
+  ActivityType,
 } from "discord.js";
 import * as dotenv from "dotenv";
 import { commands, commandModules } from "./command_list";
-import { recordMission, deleteMissionByMessage } from "./database";
+import {
+  recordMission,
+  deleteMissionByMessage,
+  getGlobalTotalHosts,
+} from "./database";
 import { checkMilestones } from "./roles";
 
 dotenv.config();
@@ -27,13 +32,30 @@ const client = new Client({
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildMembers,
   ],
 });
+
+/**
+ * Updates the bot's Rich Presence status with the global total hosts
+ */
+async function updateBotStatus(client: Client) {
+  try {
+    const totalHosts = await getGlobalTotalHosts();
+    client.user?.setActivity({
+      name: `Vase Breakers #mission-hosting | ${totalHosts} Total Hosts`,
+      type: ActivityType.Listening,
+    });
+    console.log(`📊 Status updated: ${totalHosts} total hosts.`);
+  } catch (error) {
+    console.error("❌ Failed to update status:", error);
+  }
+}
 
 const commandCollection = new Collection<string, any>();
 
 Object.values(commandModules).forEach((mod: any) => {
-  // Your sync.ts exports 'data', which contains the 'name'
   if (mod.data && mod.data.name) {
     commandCollection.set(mod.data.name, mod);
     console.log(`✅ Loaded command: ${mod.data.name}`);
@@ -58,87 +80,99 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;
   const command = commandCollection.get(interaction.commandName);
   if (!command) return;
-
   try {
     await command.execute(interaction);
+    if (interaction.commandName === "manage-stats") {
+      await updateBotStatus(client);
+    }
   } catch (error) {
     console.error(error);
-    await interaction.reply({
-      content: "❌ Error executing command.",
-      ephemeral: true,
-    });
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ content: "❌ Error executing command." });
+    } else {
+      await interaction.reply({
+        content: "❌ Error executing command.",
+        ephemeral: true,
+      });
+    }
   }
 });
 
 // Message Handler
 client.on("messageCreate", async (message) => {
   if (message.author.bot || !message.guild) return;
-  // Only track in the specified channel
   if (message.channelId !== TRACKING_CHANNEL_ID) return;
+
   const userId = message.author.id;
   const content = message.content.toLowerCase();
 
   // Track Hosting
   if (message.mentions.roles.some((r) => TRACKED_ROLE_IDS.includes(r.id))) {
-    const hostCount = await recordMission(userId, "host", message.id);
-
-    // Check for hosting milestones
-    if (message.member) {
-      const milestoneEmbed = await checkMilestones(
-        message.member,
-        hostCount,
-        "host"
-      );
-      if (milestoneEmbed) {
-        await message.channel.send({ embeds: [milestoneEmbed] });
+    try {
+      const hostCount = await recordMission(userId, "host", message.id);
+      if (message.member) {
+        const milestoneEmbed = await checkMilestones(
+          message.member,
+          hostCount,
+          "host"
+        );
+        if (milestoneEmbed) {
+          await message.channel.send({ embeds: [milestoneEmbed] });
+        }
       }
+
+      await message.reply({
+        content: `-# You have now hosted **${hostCount}** missions.`,
+        allowedMentions: { repliedUser: false },
+      });
+      await updateBotStatus(client);
+    } catch (err) {
+      console.error("Error in host tracking:", err);
     }
-    await message.reply({
-      content: `-# You have now hosted **${hostCount}** missions.`,
-      allowedMentions: { repliedUser: false },
-    });
     return;
   }
 
   // Track Leeching
   if (content === "omw" || (content.includes("omw") && message.reference)) {
-    const leechCount = await recordMission(userId, "leech", message.id);
+    try {
+      const leechCount = await recordMission(userId, "leech", message.id);
 
-    // Check for leeching milestones
-    if (message.member) {
-      const milestoneEmbed = await checkMilestones(
-        message.member,
-        leechCount,
-        "leech"
-      );
-      if (milestoneEmbed) {
-        await message.channel.send({ embeds: [milestoneEmbed] });
+      if (message.member) {
+        const milestoneEmbed = await checkMilestones(
+          message.member,
+          leechCount,
+          "leech"
+        );
+        if (milestoneEmbed) {
+          await message.channel.send({ embeds: [milestoneEmbed] });
+        }
       }
+
+      await message.reply({
+        content: `-# You have now leeched **${leechCount}** missions.`,
+        allowedMentions: { repliedUser: false },
+      });
+    } catch (err) {
+      console.error("Error in leech tracking:", err);
     }
-    await message.reply({
-      content: `-# You have now leeched **${leechCount}** missions.`,
-      allowedMentions: { repliedUser: false },
-    });
   }
 });
 
-/**
- * Message Delete Handler
- */
+// Message Delete Handler
 client.on("messageDelete", async (message) => {
   if (message.channelId === TRACKING_CHANNEL_ID) {
-    // Call the database function to remove the record associated with this message ID
     const deleted = await deleteMissionByMessage(message.id);
     if (deleted) {
-      console.log(
-        `🗑️ Removed mission record for deleted message: ${message.id}`
-      );
+      console.log(`🗑️ Removed mission record: ${message.id}`);
+      await updateBotStatus(client);
     }
   }
 });
 
 client.once("ready", () => {
   console.log(`✅ Bot Online as ${client.user?.tag} (Modular Mode)`);
+  updateBotStatus(client);
+  setInterval(() => updateBotStatus(client), 30 * 60 * 1000);
 });
 
 client.login(TOKEN);
