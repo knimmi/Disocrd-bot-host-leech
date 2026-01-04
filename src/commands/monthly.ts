@@ -3,7 +3,7 @@ import {
   EmbedBuilder,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { getLeaderboard } from "../database.js";
+import { getLeaderboard } from "../database";
 
 export const data = new SlashCommandBuilder()
   .setName("monthly")

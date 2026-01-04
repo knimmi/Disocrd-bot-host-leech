@@ -4,8 +4,8 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import { pool, getUserStats } from "../../database.js";
-import { checkMilestones } from "../../roles.js";
+import { pool, getUserStats } from "../../database";
+import { checkMilestones } from "../../roles";
 
 export const data = new SlashCommandBuilder()
   .setName("transfer")

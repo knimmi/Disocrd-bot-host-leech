@@ -1,9 +1,10 @@
-import * as stats from "./commands/stats.js";
-import * as monthly from "./commands/monthly.js";
-import * as leaderboard from "./commands/leaderboard.js";
-import * as sync from "./commands/admin/sync.js";
-import * as manageStats from "./commands/admin/manage-stats.js";
-import * as transferStats from "./commands/admin/transfer.js";
+import * as stats from "./commands/stats";
+import * as monthly from "./commands/monthly";
+import * as leaderboard from "./commands/leaderboard";
+import * as sync from "./commands/admin/sync";
+import * as manageStats from "./commands/admin/manage-stats";
+import * as transferStats from "./commands/admin/transfer";
+import * as restartTaxi from "./commands/admin/restartTaxi";
 
 export const commands = [
   stats.data.toJSON(),
@@ -12,6 +13,7 @@ export const commands = [
   sync.data.toJSON(),
   manageStats.data.toJSON(),
   transferStats.data.toJSON(),
+  restartTaxi.data.toJSON(),
 ];
 
 export const commandModules = {
@@ -21,4 +23,5 @@ export const commandModules = {
   sync,
   manageStats,
   transferStats,
+  restartTaxi,
 };

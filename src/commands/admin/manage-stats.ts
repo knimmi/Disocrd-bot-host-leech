@@ -4,8 +4,8 @@ import {
   ChatInputCommandInteraction,
   PermissionFlagsBits,
 } from "discord.js";
-import { pool, recordMission } from "../../database.js";
-import { checkMilestones } from "../../roles.js";
+import { pool, recordMission } from "../../database";
+import { checkMilestones } from "../../roles";
 
 export const data = new SlashCommandBuilder()
   .setName("manage-stats")

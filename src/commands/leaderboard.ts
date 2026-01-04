@@ -3,7 +3,7 @@ import {
   EmbedBuilder,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { getLeaderboard, getGlobalTotalHosts } from "../database.js";
+import { getLeaderboard, getGlobalTotalHosts } from "../database";
 
 export const data = new SlashCommandBuilder()
   .setName("leaderboard")

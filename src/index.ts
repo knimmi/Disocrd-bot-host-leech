@@ -6,9 +6,9 @@ import {
   Routes,
 } from "discord.js";
 import * as dotenv from "dotenv";
-import { commands, commandModules } from "./command_list.js";
-import { recordMission, deleteMissionByMessage } from "./database.js";
-import { checkMilestones } from "./roles.js";
+import { commands, commandModules } from "./command_list";
+import { recordMission, deleteMissionByMessage } from "./database";
+import { checkMilestones } from "./roles";
 
 dotenv.config();
 
@@ -31,8 +31,15 @@ const client = new Client({
 });
 
 const commandCollection = new Collection<string, any>();
-Object.values(commandModules).forEach((mod) => {
-  commandCollection.set(mod.data.name, mod);
+
+Object.values(commandModules).forEach((mod: any) => {
+  // Your sync.ts exports 'data', which contains the 'name'
+  if (mod.data && mod.data.name) {
+    commandCollection.set(mod.data.name, mod);
+    console.log(`✅ Loaded command: ${mod.data.name}`);
+  } else {
+    console.log(`❌ Failed to load a module: Missing 'data.name'`);
+  }
 });
 
 // Register Slash Commands
