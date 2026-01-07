@@ -2,15 +2,15 @@ import {
   SlashCommandBuilder,
   EmbedBuilder,
   ChatInputCommandInteraction,
-  PermissionFlagsBits,
+  MessageFlags,
 } from "discord.js";
-import { pool, getUserStats } from "../../database";
-import { checkMilestones } from "../../roles";
+import { db, getUserStats } from "../../database.js";
+import { checkMilestones } from "../../roles.js";
+import "dotenv/config";
 
 export const data = new SlashCommandBuilder()
   .setName("transfer")
   .setDescription("Admin: Transfer all stats from one user to another")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addUserOption((opt) =>
     opt
       .setName("from")
@@ -25,6 +25,15 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
+  // 1. Manual Admin ID Check from .env
+  const admins = process.env.ADMIN_IDS?.split(",") || [];
+  if (!admins.includes(interaction.user.id)) {
+    return await interaction.reply({
+      content: "❌ You do not have permission to use this admin command.",
+      flags: [MessageFlags.Ephemeral],
+    });
+  }
+
   const fromUser = interaction.options.getUser("from")!;
   const toUser = interaction.options.getUser("to")!;
 
@@ -32,17 +41,20 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (fromUser.id === toUser.id) {
     return interaction.reply({
       content: "❌ You cannot transfer stats to the same user.",
-      ephemeral: true,
+      flags: [MessageFlags.Ephemeral],
     });
   }
-  await interaction.deferReply({ ephemeral: true });
-  try {
-    const [result] = (await pool.execute(
-      "UPDATE mission_history SET userId = ? WHERE userId = ?",
-      [toUser.id, fromUser.id]
-    )) as any;
 
-    const transferredCount = result.affectedRows;
+  // Acknowledge using modern MessageFlags
+  await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+
+  try {
+    // 2. SQLite Update
+    const stmt = db.prepare(
+      "UPDATE mission_history SET userId = ? WHERE userId = ?"
+    );
+    const result = stmt.run(toUser.id, fromUser.id);
+    const transferredCount = result.changes;
 
     if (transferredCount === 0) {
       return interaction.editReply(
@@ -50,29 +62,32 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       );
     }
 
-    // Check milestones for the recipient
-    const targetMember = await interaction.guild?.members.fetch(toUser.id);
-    if (targetMember) {
-      const stats = await getUserStats(toUser.id);
+    // 3. Defensive Member Fetch (Fixes Unknown Member error)
+    try {
+      const targetMember = await interaction.guild?.members.fetch(toUser.id);
+      if (targetMember) {
+        const stats = getUserStats(toUser.id);
 
-      // Check both host and leech milestones for the new user
-      const hostEmbed = await checkMilestones(
-        targetMember,
-        stats.hosts,
-        "host"
-      );
-      const leechEmbed = await checkMilestones(
-        targetMember,
-        stats.leeches,
-        "leech"
-      );
+        const hostEmbed = await checkMilestones(
+          targetMember,
+          stats.hosts,
+          "host"
+        );
+        const leechEmbed = await checkMilestones(
+          targetMember,
+          stats.leeches,
+          "leech"
+        );
 
-      // Send celebration embeds if they reached a new milestone
-      if (interaction.channel?.isSendable()) {
-        if (hostEmbed) await interaction.channel.send({ embeds: [hostEmbed] });
-        if (leechEmbed)
-          await interaction.channel.send({ embeds: [leechEmbed] });
+        if (interaction.channel?.isSendable()) {
+          if (hostEmbed)
+            await interaction.channel.send({ embeds: [hostEmbed] });
+          if (leechEmbed)
+            await interaction.channel.send({ embeds: [leechEmbed] });
+        }
       }
+    } catch (memberError) {
+      console.log(`Target user ${toUser.id} not in this guild. Roles skipped.`);
     }
 
     const embed = new EmbedBuilder()
@@ -87,8 +102,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         },
         {
           name: "Destination:",
-          inline: true,
           value: `${toUser.username} (\`${toUser.id}\`)`,
+          inline: true,
         }
       )
       .setTimestamp();

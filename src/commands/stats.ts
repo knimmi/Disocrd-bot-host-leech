@@ -3,7 +3,7 @@ import {
   EmbedBuilder,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { getUserStats } from "../database";
+import { getUserStats } from "../database.js";
 
 export const data = new SlashCommandBuilder()
   .setName("stats")

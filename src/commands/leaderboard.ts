@@ -3,23 +3,25 @@ import {
   EmbedBuilder,
   ChatInputCommandInteraction,
 } from "discord.js";
-import { getLeaderboard, getGlobalTotalHosts } from "../database";
+import { getLeaderboard, getGlobalTotalHosts } from "../database.js";
 
 export const data = new SlashCommandBuilder()
   .setName("leaderboard")
   .setDescription("Show global mission stats and top 10 hosts");
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  // Fetch global total and all-time top 10
-  const totalGlobal = await getGlobalTotalHosts();
-  const rows = await getLeaderboard(0); // 0 ensures we get all-time records
+  const totalGlobal = getGlobalTotalHosts();
+  const rows = getLeaderboard(0) as any[]; // 0 ensures all-time records
 
-  const lbText = rows
-    .map(
-      (row: any, i: number) =>
-        `**${i + 1}.** <@${row.userId}> — \`${row.count}\` hosts`
-    )
-    .join("\n");
+  const lbText =
+    rows.length > 0
+      ? rows
+          .map(
+            (row, i) =>
+              `**${i + 1}.** <@${row.userId}> — \`${row.count}\` hosts`
+          )
+          .join("\n")
+      : "No data yet.";
 
   const embed = new EmbedBuilder()
     .setColor(0xffa500)
@@ -27,7 +29,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     .setDescription(`A total of **${totalGlobal}** missions have been hosted!`)
     .addFields({
       name: "Top 10 Mission Hosts",
-      value: lbText || "No data yet.",
+      value: lbText,
     })
     .setTimestamp();
 

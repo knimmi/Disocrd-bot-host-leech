@@ -1,98 +1,119 @@
-import mysql from "mysql2/promise";
-import * as dotenv from "dotenv";
+import Database from "better-sqlite3";
+import path from "path";
 
-dotenv.config();
+const db = new Database(path.join(process.cwd(), "missions.db"));
 
-// Create the connection pool
-export const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASS,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  enableKeepAlive: true,
-  keepAliveInitialDelay: 0,
-});
+// 1. Initialize the table structure on startup
+db.exec(`
+  CREATE TABLE IF NOT EXISTS mission_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    userId TEXT NOT NULL,
+    type TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    messageId TEXT DEFAULT NULL,
+    botReplyId TEXT DEFAULT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_type ON mission_history(userId, type);
+`);
 
 /**
- * Records multiple missions in a single query for high-performance bulk updates.
+ * 2. MIGRATION LOGIC
+ * Checks if the botReplyId column exists (for older databases) and adds it if missing.
  */
-export async function recordMultipleMissions(
-  userId: string,
-  type: "host" | "leech",
-  amount: number
-): Promise<number> {
-  const now = Date.now();
+const tableInfo = db
+  .prepare("PRAGMA table_info(mission_history)")
+  .all() as any[];
+const hasBotReplyId = tableInfo.some((col) => col.name === "botReplyId");
 
-  // 1. Prepare the bulk data array [[userId, type, timestamp, null], ...]
-  const values = Array.from({ length: amount }, () => [
-    userId,
-    type,
-    now,
-    null, // No messageId for bulk admin additions
-  ]);
-
-  // 2. Execute Bulk Insert using .query (not .execute) because .query supports arrays
-  await pool.query(
-    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES ?",
-    [values]
-  );
-
-  // 3. Fetch the updated total count
-  const [[{ count }]] = (await pool.execute(
-    "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?",
-    [userId, type]
-  )) as any;
-
-  return count;
+if (!hasBotReplyId) {
+  console.log("🛠️ Database Migration: Adding botReplyId column...");
+  try {
+    db.exec(
+      "ALTER TABLE mission_history ADD COLUMN botReplyId TEXT DEFAULT NULL;"
+    );
+  } catch (err: any) {
+    console.error(
+      "❌ Migration failed (column might already exist):",
+      err.message
+    );
+  }
 }
 
 /**
- * Records a single mission event (used for message tracking).
+ * Records a single mission (Host or Leech).
  */
-export async function recordMission(
+export function recordMission(
   userId: string,
   type: "host" | "leech",
   messageId?: string
 ) {
-  await pool.execute(
-    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES (?, ?, ?, ?)",
-    [userId, type, Date.now(), messageId || null]
+  const insert = db.prepare(
+    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES (?, ?, ?, ?)"
   );
+  insert.run(userId, type, Date.now(), messageId || null);
 
-  const [[{ count }]] = (await pool.execute(
-    "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?",
-    [userId, type]
-  )) as any;
-
-  return count;
+  const countStmt = db.prepare(
+    "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?"
+  );
+  const result = countStmt.get(userId, type) as { count: number };
+  return result.count;
 }
 
 /**
- * Deletes a mission record based on its associated Discord message ID.
+ * Finds a record by messageId.
+ * Essential for identifying the user when a message is deleted from Discord.
  */
-export async function deleteMissionByMessage(messageId: string) {
-  const [result] = (await pool.execute(
-    "DELETE FROM mission_history WHERE messageId = ?",
-    [messageId]
-  )) as any;
-
-  return result.affectedRows > 0;
+export function getMissionByMessageId(messageId: string) {
+  const stmt = db.prepare(
+    "SELECT userId, type FROM mission_history WHERE messageId = ?"
+  );
+  return stmt.get(messageId) as
+    | { userId: string; type: "host" | "leech" }
+    | undefined;
 }
 
 /**
- * Fetches host, leech, and total counts for a single user.
+ * Updates a mission record with the ID of the bot's reply message.
  */
-export async function getUserStats(userId: string) {
-  const [rows] = (await pool.execute(
-    "SELECT type, COUNT(*) as count FROM mission_history WHERE userId = ? GROUP BY type",
-    [userId]
-  )) as any;
+export function updateBotReplyId(messageId: string, botReplyId: string) {
+  const stmt = db.prepare(
+    "UPDATE mission_history SET botReplyId = ? WHERE messageId = ?"
+  );
+  return stmt.run(botReplyId, messageId);
+}
+
+/**
+ * Retrieves the bot's reply message ID associated with a mission.
+ */
+export function getBotReplyId(messageId: string): string | null {
+  const stmt = db.prepare(
+    "SELECT botReplyId FROM mission_history WHERE messageId = ?"
+  );
+  const row = stmt.get(messageId) as { botReplyId: string } | undefined;
+  return row ? row.botReplyId : null;
+}
+
+/**
+ * Deletes a record by messageId.
+ */
+export function deleteMissionByMessage(messageId: string) {
+  const stmt = db.prepare("DELETE FROM mission_history WHERE messageId = ?");
+  const info = stmt.run(messageId);
+  return info.changes > 0;
+}
+
+/**
+ * Fetches stats (Hosts and Leeches) for a single user.
+ */
+export function getUserStats(userId: string) {
+  const stmt = db.prepare(
+    "SELECT type, COUNT(*) as count FROM mission_history WHERE userId = ? GROUP BY type"
+  );
+  const rows = stmt.all(userId) as any[];
 
   let hosts = 0,
     leeches = 0;
-  rows.forEach((row: any) => {
+  rows.forEach((row) => {
     if (row.type === "host") hosts = row.count;
     if (row.type === "leech") leeches = row.count;
   });
@@ -101,22 +122,57 @@ export async function getUserStats(userId: string) {
 }
 
 /**
- * Fetches the top 10 hosts based on a starting timestamp.
+ * Fetches the global total of all missions hosted on the server.
  */
-export async function getLeaderboard(startTime: number = 0) {
-  const [rows] = (await pool.execute(
-    'SELECT userId, COUNT(*) as count FROM mission_history WHERE timestamp >= ? AND type = "host" GROUP BY userId ORDER BY count DESC LIMIT 10',
-    [startTime]
-  )) as any;
-  return rows;
+export function getGlobalTotalHosts() {
+  const stmt = db.prepare(
+    "SELECT COUNT(*) as total FROM mission_history WHERE type = 'host'"
+  );
+  const result = stmt.get() as { total: number };
+  return result.total || 0;
 }
 
 /**
- * Fetches the total number of missions hosted globally.
+ * Leaderboard function for top 10 hosts.
  */
-export async function getGlobalTotalHosts() {
-  const [[{ total }]] = (await pool.execute(
-    'SELECT COUNT(*) as total FROM mission_history WHERE type = "host"'
-  )) as any;
-  return total || 0;
+export function getLeaderboard(startTime: number = 0) {
+  const stmt = db.prepare(`
+    SELECT userId, COUNT(*) as count 
+    FROM mission_history 
+    WHERE timestamp >= ? AND type = 'host' 
+    GROUP BY userId 
+    ORDER BY count DESC 
+    LIMIT 10
+  `);
+  return stmt.all(startTime);
 }
+
+/**
+ * High-speed bulk recording (useful for manual syncs or migrations).
+ */
+export function recordMultipleMissions(
+  userId: string,
+  type: "host" | "leech",
+  amount: number
+) {
+  const insert = db.prepare(
+    "INSERT INTO mission_history (userId, type, timestamp, messageId) VALUES (?, ?, ?, NULL)"
+  );
+
+  const bulkInsert = db.transaction((uid: string, t: string, qty: number) => {
+    const now = Date.now();
+    for (let i = 0; i < qty; i++) {
+      insert.run(uid, t, now);
+    }
+  });
+
+  bulkInsert(userId, type, amount);
+
+  const countStmt = db.prepare(
+    "SELECT COUNT(*) as count FROM mission_history WHERE userId = ? AND type = ?"
+  );
+  const result = countStmt.get(userId, type) as { count: number };
+  return result.count;
+}
+
+export { db };

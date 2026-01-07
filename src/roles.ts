@@ -15,69 +15,59 @@ export async function checkMilestones(
   type: "host" | "leech"
 ) {
   let milestoneEmbed: EmbedBuilder | null = null;
-  const host1k = MILESTONE_ROLES.host1k;
-  const host3k = MILESTONE_ROLES.host3k;
+  const { host1k, host3k, leech3k } = MILESTONE_ROLES;
 
   try {
     if (type === "host") {
-      // --- 1. ROLE SYNCING LOGIC ---
+      // --- 1. ROLE ASSIGNMENT & REMOVAL ---
       if (count >= 3000) {
         if (!member.roles.cache.has(host3k)) {
-          await member.roles.add(host3k);
-          milestoneEmbed = createMilestoneEmbed(
-            member,
-            "🏆 3,000 Missions Hosted!",
-            `Congratulations ${member.user.username}! You have reached the 3,000 host milestone.`,
-            count,
-            type
-          );
+          await safelyManageRole(member, host3k, "add");
+          if (count === 3000)
+            milestoneEmbed = createMilestoneEmbed(
+              member,
+              "🏆 3,000 Missions Hosted!",
+              count,
+              type
+            );
         }
-        if (member.roles.cache.has(host1k)) await member.roles.remove(host1k);
+        if (member.roles.cache.has(host1k))
+          await safelyManageRole(member, host1k, "remove");
       } else if (count >= 1000) {
         if (!member.roles.cache.has(host1k)) {
-          await member.roles.add(host1k);
-          milestoneEmbed = createMilestoneEmbed(
-            member,
-            "🎊 1,000 Missions Hosted!",
-            `Congratulations ${member.user.username}! You have reached the 1,000 host milestone.`,
-            count,
-            type
-          );
+          await safelyManageRole(member, host1k, "add");
+          if (count === 1000)
+            milestoneEmbed = createMilestoneEmbed(
+              member,
+              "🏆 1,000 Missions Hosted!",
+              count,
+              type
+            );
         }
-        if (member.roles.cache.has(host3k)) await member.roles.remove(host3k);
+        if (member.roles.cache.has(host3k))
+          await safelyManageRole(member, host3k, "remove");
       } else {
-        if (member.roles.cache.has(host1k)) await member.roles.remove(host1k);
-        if (member.roles.cache.has(host3k)) await member.roles.remove(host3k);
-      }
-
-      // --- 2. EVERY 100 HOSTS LOGIC ---
-      // This checks if the count is a multiple of 100 (e.g., 3100, 3200)
-      // and ensures we don't overwrite a major milestone embed (1k/3k)
-      if (count > 0 && count % 100 === 0 && !milestoneEmbed) {
-        milestoneEmbed = new EmbedBuilder()
-          .setColor(0x3498db)
-          .setTitle("🌟 Amazing Contribution!")
-          .setDescription(
-            `Hey ${member}, you have hosted **${count}** missions now. Thank you for your amazing contribution to the server!`
-          )
-          .setThumbnail(member.user.displayAvatarURL())
-          .setTimestamp();
+        // Remove roles if they fall below 1000
+        if (member.roles.cache.has(host1k))
+          await safelyManageRole(member, host1k, "remove");
+        if (member.roles.cache.has(host3k))
+          await safelyManageRole(member, host3k, "remove");
       }
     } else if (type === "leech") {
-      const leech3k = MILESTONE_ROLES.leech3k;
       if (count >= 3000) {
         if (!member.roles.cache.has(leech3k)) {
-          await member.roles.add(leech3k);
-          milestoneEmbed = createMilestoneEmbed(
-            member,
-            "🚀 3,000 Missions Leeched!",
-            `Congratulations ${member.user.username}! You have reached the 3,000 leech milestone.`,
-            count,
-            type
-          );
+          await safelyManageRole(member, leech3k, "add");
+          if (count === 3000)
+            milestoneEmbed = createMilestoneEmbed(
+              member,
+              "🏆 3,000 Missions Leeched!",
+              count,
+              type
+            );
         }
       } else {
-        if (member.roles.cache.has(leech3k)) await member.roles.remove(leech3k);
+        if (member.roles.cache.has(leech3k))
+          await safelyManageRole(member, leech3k, "remove");
       }
     }
 
@@ -88,18 +78,48 @@ export async function checkMilestones(
   }
 }
 
+async function safelyManageRole(
+  member: GuildMember,
+  roleId: string,
+  action: "add" | "remove"
+) {
+  if (!roleId) return;
+  const botMember = member.guild.members.me;
+  const role = member.guild.roles.cache.get(roleId);
+
+  if (!role || !botMember) return;
+
+  // HIERARCHY CHECK
+  if (botMember.roles.highest.position <= role.position) {
+    console.warn(
+      `⚠️ [Hierarchy Error] Cannot ${action} role "${role.name}". Drag Bot role HIGHER.`
+    );
+    return;
+  }
+
+  try {
+    if (action === "add") await member.roles.add(roleId);
+    else await member.roles.remove(roleId);
+  } catch (e) {
+    console.error(`❌ Role ${action} failed:`, e);
+  }
+}
+
 function createMilestoneEmbed(
   member: GuildMember,
   title: string,
-  description: string,
   count: number,
   type: string
 ) {
   return new EmbedBuilder()
     .setColor(0xffa500)
     .setTitle(title)
-    .setDescription(description)
+    .setDescription(
+      `Congratulations ${
+        member.user.username
+      }! You have reached the ${count.toLocaleString()} ${type} milestone.`
+    )
     .setThumbnail(member.user.displayAvatarURL())
-    .addFields({ name: "New Total", value: `\`${count}\` ${type}s` })
+    .addFields({ name: "New Total", value: `\`${count}\`` })
     .setTimestamp();
 }
