@@ -27,7 +27,7 @@ A Discord bot built with **TypeScript** and **SQLite**. provides real-time stati
 ### 2. Installation
 ```bash
 # Clone the repository
-git clone [https://github.com/yourusername/VaseBot.git](https://github.com/yourusername/VaseBot.git)
+git clone [https://github.com/knimmi/VaseBot.git](https://github.com/knimmi/VaseBot.git)
 cd VaseBot
 
 # Install dependencies
