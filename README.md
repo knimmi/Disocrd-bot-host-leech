@@ -14,7 +14,7 @@ A Discord bot built with **TypeScript** and **SQLite**. provides real-time stati
 
 - **Language:** [TypeScript](https://www.typescriptlang.org/)
 - **Library:** [Discord.js v14+](https://discord.js.org/)
-- **Database:** [SQLite](https://www.msqlite.org/)
+- **Database:** [SQLite](https://www.sqlite.org/)
 - **Environment:** Node.js with `dotenv` secret management
 
 ---
