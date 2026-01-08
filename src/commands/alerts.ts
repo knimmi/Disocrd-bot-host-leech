@@ -3,21 +3,33 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
 } from "discord.js";
-import axios from "axios";
 import fs from "fs";
 import path from "path";
 import {
   getPLFromRowName,
   getMissionEmoji,
-  getItemEmoji,
   formatReward,
   formatNumber,
+  getItemEmoji,
 } from "../utils/alerts-utils.js";
 
-const PC_BASIC =
-  "M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU=";
-const USER_AGENT =
-  "Fortnite/++Fortnite+Release-14.00-CL-32116959 Windows/10.0.22621.1.768.64bit";
+const REWARD_CHOICES = [
+  { name: "V-Bucks", value: "currency_mtxswap" },
+  { name: "Mythic Leads", value: "manager" },
+  { name: "Upgrade Llama Tokens", value: "voucher_cardpack_bronze" },
+  { name: "Mini Llamas", value: "voucher_basicpack" },
+  { name: "Masters Driver", value: "sid_blunt_club_light" },
+  { name: "Fortsville Slugger 3000", value: "sid_blunt_light_rocketbat" },
+  { name: "Power B.A.S.E. Knox", value: "hid_constructor_008" },
+  { name: "Legendary Survivor", value: "workerbasic_sr_t03" },
+  { name: "Legendary Schematics", value: "filter_leg_schematic" },
+  { name: "Legendary Heroes", value: "filter_leg_hero" },
+  // Epic Perk-Up removed from here
+  { name: "Fire-Up", value: "reagent_alteration_ele_fire" },
+  { name: "Frost-Up", value: "reagent_alteration_ele_water" },
+  { name: "Amp-Up", value: "reagent_alteration_ele_nature" },
+  { name: "160s", value: "filter_160" },
+];
 
 export const data = new SlashCommandBuilder()
   .setName("alerts")
@@ -27,54 +39,34 @@ export const data = new SlashCommandBuilder()
       .setName("reward")
       .setDescription("The reward to search for")
       .setRequired(true)
-      .addChoices(
-        { name: "V-Bucks", value: "currency_mtxswap" },
-        { name: "Mythic Leads", value: "manager" },
-        { name: "Legendary Survivor", value: "workerbasic_sr_t03" },
-        { name: "Epic Perk-Up", value: "reagent_alteration_upgrade_vr" },
-        { name: "Upgrade Llama Tokens", value: "voucher_cardpack_bronze" },
-        { name: "Fire/Frost/Nature", value: "ele_" },
-        { name: "160s (Alerts Only)", value: "filter_160" }
-      )
+      .addChoices(...REWARD_CHOICES)
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
   try {
     await interaction.deferReply();
 
-    // Path to your service worker account file as per your instructions
-    const credsPath = path.join(process.cwd(), "src", "credentials.json");
-    const { accountId, deviceId, secret } = JSON.parse(
-      fs.readFileSync(credsPath, "utf8")
-    );
+    const cachePath = path.join(process.cwd(), "src", "daily_missions.json");
+    const resetPath = path.join(process.cwd(), "src", "last_reset.json");
 
-    const authRes = await axios.post(
-      "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token",
-      new URLSearchParams({
-        grant_type: "device_auth",
-        account_id: accountId,
-        device_id: deviceId,
-        secret,
-      }).toString(),
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-          Authorization: `basic ${PC_BASIC}`,
-        },
-      }
-    );
+    if (!fs.existsSync(cachePath) || !fs.existsSync(resetPath)) {
+      return await interaction.editReply(
+        "❌ Mission data is currently unavailable. Please wait for the daily sync."
+      );
+    }
 
-    const worldRes = await axios.get(
-      "https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/world/info",
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-          Authorization: `Bearer ${authRes.data.access_token}`,
-        },
-      }
-    );
+    const resetData = JSON.parse(fs.readFileSync(resetPath, "utf8"));
+    const lastRun = resetData.lastRunTimestamp || 0;
+    const now = Date.now();
+    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
 
-    const { theaters, missionAlerts, missions: missionData } = worldRes.data;
+    const isStale = now - lastRun > TWENTY_FOUR_HOURS;
+
+    const worldData = JSON.parse(fs.readFileSync(cachePath, "utf8"));
+    const fileStats = fs.statSync(cachePath);
+    const lastUpdated = new Date(lastRun || fileStats.mtime);
+
+    const { theaters, missionAlerts, missions: missionData } = worldData;
     const theaterNames: Record<string, string> = {};
     theaters.forEach((t: any) => (theaterNames[t.uniqueId] = t.displayName.en));
 
@@ -86,7 +78,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     });
 
     const selectedReward = interaction.options.getString("reward") || "";
-    const groupedResults: Record<string, string[]> = {};
+    const rewardDisplayName =
+      REWARD_CHOICES.find((c: any) => c.value === selectedReward)?.name ||
+      "Rewards";
+
+    const groupedResults: Record<string, { quantity: number; text: string }[]> =
+      {};
     let totalSelectedReward = 0;
 
     missionAlerts.forEach((tGroup: any) => {
@@ -97,38 +94,68 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const mInfo = missionLookup.get(`${theaterId}-${alert.tileIndex}`);
         if (!mInfo) return;
 
-        /**
-         * The API provides rowName in either missionDifficultyInfo or difficultyInfo.
-         * The rowName often contains 'Theater_' or 'Phoenix_' prefixes.
-         */
-        const rowName =
+        const pl = getPLFromRowName(
+          theaterId,
           mInfo.missionDifficultyInfo?.rowName ||
-          mInfo.difficultyInfo?.rowName ||
-          "";
+            mInfo.difficultyInfo?.rowName ||
+            ""
+        );
 
-        const pl = getPLFromRowName(theaterId, rowName);
-        const alertItems = alert.missionAlertRewards?.items || [];
+        let displayItems: any[] = [];
         let isMatch = false;
+        let currentMissionQuantity = 0;
 
         if (selectedReward === "filter_160") {
           if (pl === "160") {
             isMatch = true;
-            alertItems.forEach((i: any) => (totalSelectedReward += i.quantity));
+            const rawRewards = (mInfo.missionRewards?.items || []).filter(
+              (i: any) => {
+                const type = i.itemType.toLowerCase();
+                return (
+                  !type.includes("gold") &&
+                  !type.includes("eventscaling") &&
+                  !type.includes("eventcurrency")
+                );
+              }
+            );
+            const groupedRewards: Record<string, number> = {};
+            rawRewards.forEach((item: any) => {
+              groupedRewards[item.itemType] =
+                (groupedRewards[item.itemType] || 0) + item.quantity;
+            });
+            displayItems = Object.keys(groupedRewards).map((type) => ({
+              itemType: type,
+              quantity: groupedRewards[type],
+            }));
           }
         } else {
-          /**
-           * FIX: Filter items by stripping prefixes like "AccountResource:"
-           * This ensures choices like "ele_" or "currency_mtxswap" match correctly.
-           */
+          const alertItems = alert.missionAlertRewards?.items || [];
           const matchingItems = alertItems.filter((i: any) => {
-            const cleanItemType = i.itemType.split(":").pop().toLowerCase();
-            return cleanItemType.includes(selectedReward.toLowerCase());
+            const rawType = i.itemType.toLowerCase();
+            const cleanType = rawType.split(":").pop() || "";
+
+            // Logic check: Explicitly ignore Epic Perk-Up if it somehow reaches here
+            if (cleanType === "reagent_alteration_upgrade_vr") return false;
+
+            if (selectedReward === "filter_leg_schematic")
+              return cleanType.startsWith("sid_") && cleanType.includes("_sr_");
+            if (selectedReward === "filter_leg_hero")
+              return cleanType.startsWith("hid_") && cleanType.includes("_sr_");
+            return (
+              cleanType === selectedReward.toLowerCase() ||
+              rawType.includes(selectedReward.toLowerCase()) ||
+              (selectedReward === "manager" && cleanType.includes("manager")) ||
+              (selectedReward === "voucher_basicpack" &&
+                (cleanType.includes("voucher_basicpack") ||
+                  cleanType.includes("cardpack_mini")))
+            );
           });
 
           if (matchingItems.length > 0) {
             isMatch = true;
+            displayItems = alertItems;
             matchingItems.forEach(
-              (i: any) => (totalSelectedReward += i.quantity)
+              (i: any) => (currentMissionQuantity += i.quantity)
             );
           }
         }
@@ -137,39 +164,67 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           const zone = theaterNames[theaterId] || "Unknown Zone";
           if (!groupedResults[zone]) groupedResults[zone] = [];
 
-          // Use the clean labels and emojis from alerts-utils.js
-          groupedResults[zone].push(
-            `${getMissionEmoji(mInfo.missionGenerator)} ⚡ \`${pl.padEnd(
-              3
-            )}\` | ${alertItems
+          let rewardText;
+          if (selectedReward === "filter_160") {
+            displayItems.forEach(
+              (i: any) => (currentMissionQuantity += i.quantity)
+            );
+            rewardText = displayItems
+              .map((i: any) => `${i.quantity}x ${getItemEmoji(i.itemType)}`)
+              .join(", ");
+          } else {
+            rewardText = displayItems
               .map((i: any) => formatReward(i.itemType, i.quantity))
-              .join(", ")}`
-          );
+              .join(", ");
+          }
+
+          if (rewardText) {
+            totalSelectedReward += currentMissionQuantity;
+            groupedResults[zone].push({
+              quantity: currentMissionQuantity,
+              text: `${getMissionEmoji(
+                mInfo.missionGenerator
+              )} ⚡ \`${pl.padEnd(3)}\` | ${rewardText}`,
+            });
+          }
         }
       });
     });
 
     const embed = new EmbedBuilder()
-      .setTitle(`Mission Alerts: ${selectedReward.replace(/_/g, " ")}`)
-      .setColor("#5865F2")
-      .setFooter({ text: `Total: ${formatNumber(totalSelectedReward)}` })
+      .setTitle(`Mission Alerts For: ${rewardDisplayName}`)
+      .setColor(isStale ? "#FFA500" : "#5865F2")
+      .setFooter({
+        text: `Total: ${formatNumber(totalSelectedReward)}`,
+      })
       .setTimestamp();
 
     const zones = Object.keys(groupedResults);
     if (zones.length === 0) {
-      embed.setDescription(`❌ No missions found for the selected reward.`);
-    } else {
-      zones.forEach((zone) =>
-        embed.addFields({
-          name: `📍 ${zone.toUpperCase()}`,
-          value: groupedResults[zone].join("\n").substring(0, 1024),
-        })
+      embed.setDescription(
+        `❌ No missions found for **${rewardDisplayName}**.`
       );
+    } else {
+      zones.forEach((zone) => {
+        let sortedText = groupedResults[zone]
+          .sort((a, b) => b.quantity - a.quantity)
+          .map((m) => m.text)
+          .join("\n");
+        if (sortedText.length > 1024) {
+          sortedText =
+            sortedText.substring(0, sortedText.lastIndexOf("\n", 1021)) +
+            "\n...";
+        }
+        embed.addFields({
+          name: `${zone.toUpperCase()}`,
+          value: sortedText,
+        });
+      });
     }
-
     await interaction.editReply({ embeds: [embed] });
   } catch (error: any) {
-    console.error("Error in Alerts Command:", error.message);
-    await interaction.editReply("❌ Failed to fetch mission data.");
+    console.error("Error:", error.message);
+    if (interaction.deferred)
+      await interaction.editReply("❌ Error reading mission data.");
   }
 }

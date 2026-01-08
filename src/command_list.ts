@@ -6,6 +6,7 @@ import * as manageStats from "./commands/admin/manage-stats";
 import * as transferStats from "./commands/admin/transfer";
 import * as restartTaxi from "./commands/admin/restartTaxi";
 import * as rewards from "./commands/alerts";
+import * as refresh from "./commands/admin/refresh";
 
 export const commands = [
   stats.data.toJSON(),
@@ -16,6 +17,7 @@ export const commands = [
   transferStats.data.toJSON(),
   restartTaxi.data.toJSON(),
   rewards.data.toJSON(),
+  refresh.data.toJSON(),
 ];
 
 export const commandModules = {
@@ -27,4 +29,5 @@ export const commandModules = {
   transferStats,
   restartTaxi,
   rewards,
+  refresh,
 };

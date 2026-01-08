@@ -5,6 +5,7 @@
 export const REWARD_EMOJIS = {
   UC_PERK: "<:ucperk:1458453604787552362>",
   C_PERK: "<:cperk:1458453583392673853>",
+  MINI_LLAMA: "<:ml:1458495881878831258>",
   RE_PERK: "<:reperk:1458176552855670836>",
   EYE: "<:eye:1457763941051797708>",
   SHARD: "<:shard:1457763923397709946>",
@@ -31,6 +32,9 @@ export const REWARD_EMOJIS = {
   LEG_PERK: "<:lp:1457763973784146013>",
   EPIC_PERK: "<:ep:1457763879055786026>",
   MYTHIC: "🌟",
+  CLUB: "<:driver:1457711561756901409>",
+  BAT: "<:slugger:1457711578404098089>",
+  KNOX: "👷",
 };
 
 export const MISSION_EMOJIS = {
@@ -47,11 +51,12 @@ export const MISSION_EMOJIS = {
   REFUEL: "<:refuel:1457705306313199698>",
   LLAMA: "<:llama:1457700803254026241>",
   CAT3: "<:cat3:1457700186833817620>",
-  CAT2: "<:cat2:1457700175523736667>",
+  CAT2: "<:cat2:1457700175572373667>",
   CAT1: "<:cat1:1457699998933450807>",
   CAT4: "<:cat4:1457699986211868779>",
   LTR: "<:ltr:1458162046439915753>",
   MSK: "<:msk:1458162028228116554>",
+  HTM: "<:htt:1458731598311723139>",
 };
 
 export const MYTHIC_LEAD_IDENTIFIERS = new Set([
@@ -82,6 +87,7 @@ export const MYTHIC_LEAD_IDENTIFIERS = new Set([
 ]);
 
 const MISSION_NAME_MAP: Record<string, keyof typeof MISSION_EMOJIS> = {
+  // Atlases
   Cat1FtS: "CAT1",
   GateSingle: "CAT1",
   "1Gate": "CAT1",
@@ -91,27 +97,48 @@ const MISSION_NAME_MAP: Record<string, keyof typeof MISSION_EMOJIS> = {
   "3Gates": "CAT3",
   Cat4FtS: "CAT4",
   "4Gates": "CAT4",
+  // Bomb
   DtB: "DTB",
   DeliverTheBomb: "DTB",
+  // Encampments
   DtE: "ENCAMPMENTS",
   DestroyTheEncampments: "ENCAMPMENTS",
+  // Eliminate
   EliminateAndCollect: "ELIMINATE",
+  // Evacuate
   EtS_C: "EVACUATE",
   EtShelter: "EVACUATE",
+  // Rescue
   EvacuateTheSurvivors: "RESCUE",
   EtSurvivors: "RESCUE",
+  // Radar
   BuildtheRadarGrid: "RADAR",
   BuildTheRadar: "RADAR",
+  // Refuel
   RefuelTheBase: "REFUEL",
   FuelTheHomebase: "REFUEL",
+  // Resupply
   Resupply: "RESUPPLY",
+  // HTM
+  HTM: "HTM",
+  HuntTheTitan: "HTM",
+  // Rocket
+  LtR: "LTR",
+  LaunchTheRocket: "LTR",
+  // RtD
   RtD: "RTD",
   RetrieveTheData: "RTD",
+  // RtL
   RtL: "RTL",
+  LtB: "RTL",
+  T1_VHT_LtB: "RTL",
+  LaunchTheBalloon: "RTL",
   RideTheLightning: "RTL",
+  // Repair
   RtS: "REPAIR",
   PowerTheStormShield: "REPAIR",
-  LaunchTheRocket: "LTR",
+  RepairTheShelter: "REPAIR",
+  // Fallbacks
   Dudebro: "MSK",
 };
 
@@ -152,8 +179,7 @@ const WORLD_POWER_LEVEL: Record<string, Record<string, number>> = {
     Endgame_Zone5: 140,
     Endgame_Zone6: 160,
   },
-  // Added Venture Mappings from maps.py
-  "25D86CC64F0F3EE1831CFD9B2DF6D68C": {
+  D61659064BED28BEA91FD2A343C126B7: {
     Phoenix_Zone02: 3,
     Phoenix_Zone03: 5,
     Phoenix_Zone05: 15,
@@ -168,6 +194,10 @@ const WORLD_POWER_LEVEL: Record<string, Record<string, number>> = {
     Phoenix_Zone23: 124,
     Phoenix_Zone25: 140,
   },
+
+  MSK_FALLBACK: {
+    Hard_Zone5_Dudebro: 122,
+  },
 };
 
 /**
@@ -177,9 +207,8 @@ const WORLD_POWER_LEVEL: Record<string, Record<string, number>> = {
 export function getPLFromRowName(theaterId: string, rowName: string): string {
   if (!rowName) return "??";
 
-  // Strip only the leading Theater_ prefix but keep Phoenix_ for Venture matching
-  const cleanRow = rowName.replace(/^Theater_/, "");
-
+  // This strips "Theater_" AND "_Group_" to match mapping keys
+  const cleanRow = rowName.replace(/^Theater_/, "").replace("_Group_", "_");
   const theaterMap = WORLD_POWER_LEVEL[theaterId];
   if (theaterMap && theaterMap[cleanRow]) {
     return theaterMap[cleanRow].toString();
@@ -196,7 +225,7 @@ export function getPLFromRowName(theaterId: string, rowName: string): string {
 }
 
 export function formatNumber(num: number): string {
-  return new Intl.NumberFormat("en-US").format(num);
+  return new Intl.NumberFormat("nl-NL").format(num);
 }
 
 export function getMissionEmoji(generatorPath: string): string {
@@ -208,10 +237,20 @@ export function getMissionEmoji(generatorPath: string): string {
 }
 
 export function getItemEmoji(itemType: string): string {
-  // Fix for disappearing emojis: handles "AccountResource:", "Schematic:", etc.
-  const type = itemType.toLowerCase().split(":").pop() || "";
+  const rawType = itemType.toLowerCase();
+  const type = rawType.split(":").pop() || "";
 
-  // 1. Mythic Leads
+  // 1. Currencies & XP (MOVED UP to prevent "schematicxp" from being caught as a Manual)
+  if (type.includes("currency_mtxswap")) return REWARD_EMOJIS.VBUCKS;
+  if (type.includes("phoenixxp")) return REWARD_EMOJIS.VENTURE_XP;
+  if (type.includes("personnelxp")) return REWARD_EMOJIS.SURVIVOR_XP;
+  if (type.includes("heroxp")) return REWARD_EMOJIS.HERO_XP;
+  if (type.includes("schematicxp")) return REWARD_EMOJIS.SCHEMATIC_XP; // Now it will find this first!
+  if (type.includes("scaling") || type.includes("gold"))
+    return REWARD_EMOJIS.GOLD;
+  if (type.includes("currency_xrayllama")) return REWARD_EMOJIS.XRAY_TICKET;
+
+  // 2. Mythic Leads
   if (
     MYTHIC_LEAD_IDENTIFIERS.has(type) ||
     (type.includes("manager") && type.includes("_sr_"))
@@ -219,58 +258,76 @@ export function getItemEmoji(itemType: string): string {
     return REWARD_EMOJIS.MYTHIC;
   }
 
-  // 2. Perk-ups and Evolution
+  // 3. Perk-ups and Evolution
   if (type.includes("reagent_c_t03")) return REWARD_EMOJIS.EYE;
   if (type.includes("reagent_c_t04")) return REWARD_EMOJIS.SHARD;
   if (type.includes("reagent_c_t02")) return REWARD_EMOJIS.LIAB;
   if (type.includes("reagent_c_t01")) return REWARD_EMOJIS.PDOR;
-  if (type.includes("upgrade_uc")) return REWARD_EMOJIS.UC_PERK;
-  if (type.includes("upgrade_c")) return REWARD_EMOJIS.C_PERK;
-  if (type.includes("upgrade_sr")) return REWARD_EMOJIS.LEG_PERK;
-  if (type.includes("upgrade_vr")) return REWARD_EMOJIS.EPIC_PERK;
+  if (type.includes("reagent_alteration_upgrade_uc"))
+    return REWARD_EMOJIS.UC_PERK;
+  if (type.includes("reagent_alteration_upgrade_r"))
+    return REWARD_EMOJIS.C_PERK;
+  if (type.includes("reagent_alteration_upgrade_vr"))
+    return REWARD_EMOJIS.EPIC_PERK;
+  if (type.includes("reagent_alteration_upgrade_sr"))
+    return REWARD_EMOJIS.LEG_PERK;
   if (type.includes("reagent_alteration_generic")) return REWARD_EMOJIS.RE_PERK;
 
-  // 3. Elemental Ups (Fix for disappearing Ele-ups)
+  // 4. Elemental Ups
   if (type.includes("ele_fire")) return REWARD_EMOJIS.FIRE_UP;
   if (type.includes("ele_water")) return REWARD_EMOJIS.ICE_UP;
   if (type.includes("ele_nature")) return REWARD_EMOJIS.AMP_UP;
 
-  // 4. Tickets
-  if (type.includes("summer")) return REWARD_EMOJIS.TICKET_SUMMER;
-  if (type.includes("spring")) return REWARD_EMOJIS.TICKET_SPRING;
-  if (type.includes("snowballs") || type.includes("snowflake"))
-    return REWARD_EMOJIS.TICKET_FROST;
-  if (type.includes("campaign_event_currency") || type.includes("adventure"))
-    return REWARD_EMOJIS.TICKET_HTR;
+  // 5. Tickets & Card Packs
+  if (type.includes("voucher_basicpack")) return REWARD_EMOJIS.MINI_LLAMA;
+  if (
+    type.includes("eventcurrency") ||
+    type.includes("summer") ||
+    type.includes("spring") ||
+    type.includes("snowballs") ||
+    type.includes("snowflake") ||
+    type.includes("roadtrip") ||
+    type.includes("adventure") ||
+    type.includes("campaign_event_currency")
+  ) {
+    return "<a:rickets:1458179312883601428>";
+  }
 
-  // 5. Schematics (Weapons/Traps)
+  // 6. Heroes & People
+  if (
+    type.startsWith("hid_") ||
+    type.startsWith("cid_") ||
+    type.includes("reagent_people") ||
+    type.includes("did_defender")
+  ) {
+    return REWARD_EMOJIS.TRAINING_MANUAL;
+  }
+
+  // 7. Schematics (Weapons/Traps)
+  if (rawType.includes("sid_blunt_club_light")) return REWARD_EMOJIS.CLUB;
+  if (rawType.includes("sid_blunt_light_rocketbat")) return REWARD_EMOJIS.BAT;
+  if (rawType.includes("hid_constructor_008")) return REWARD_EMOJIS.KNOX;
+
   if (
     type.includes("sid_floor_") ||
     type.includes("sid_wall_") ||
     type.includes("sid_ceiling_")
   )
     return REWARD_EMOJIS.TRAP_DESIGN;
+
+  // This will now only trigger for actual weapon/trap schematics
   if (
     type.includes("sid_") ||
     type.includes("weapon_") ||
     type.includes("schematic")
   )
     return REWARD_EMOJIS.WEAPON_DESIGN;
+
   if (type.includes("workerbasic_") || type.includes("survivor"))
     return REWARD_EMOJIS.SURVIVOR;
-  if (type.includes("reagent_people")) return REWARD_EMOJIS.TRAINING_MANUAL;
+
   if (type.includes("reagent_weapons")) return REWARD_EMOJIS.WEAPON_DESIGN;
   if (type.includes("reagent_traps")) return REWARD_EMOJIS.TRAP_DESIGN;
-
-  // 6. Currencies & XP
-  if (type.includes("currency_mtxswap")) return REWARD_EMOJIS.VBUCKS;
-  if (type.includes("phoenixxp")) return REWARD_EMOJIS.VENTURE_XP;
-  if (type.includes("scaling") || type.includes("gold"))
-    return REWARD_EMOJIS.GOLD;
-  if (type.includes("currency_xrayllama")) return REWARD_EMOJIS.XRAY_TICKET;
-  if (type.includes("personnelxp")) return REWARD_EMOJIS.SURVIVOR_XP;
-  if (type.includes("heroxp")) return REWARD_EMOJIS.HERO_XP;
-  if (type.includes("schematicxp")) return REWARD_EMOJIS.SCHEMATIC_XP;
 
   return "📦";
 }
