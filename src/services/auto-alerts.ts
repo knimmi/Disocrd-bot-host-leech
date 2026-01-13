@@ -1,4 +1,9 @@
-import { Client, TextChannel, EmbedBuilder } from "discord.js";
+import {
+  Client,
+  TextChannel,
+  EmbedBuilder,
+  AttachmentBuilder,
+} from "discord.js";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -16,7 +21,18 @@ import {
   resolveZone,
 } from "../utils/zone-utils.js";
 
+// --- FILE PATHS ---
 const CACHE_PATH = path.join(process.cwd(), "src", "daily_missions.json");
+const CACHE_NO_GUIDS_PATH = path.join(
+  process.cwd(),
+  "src",
+  "daily_missions_no_guids.json"
+);
+const CACHE_DEV_PATH = path.join(
+  process.cwd(),
+  "src",
+  "daily_missions_dev.json"
+);
 const HASH_FILE_PATH = path.join(process.cwd(), "src", "last_alert_hash.txt");
 
 // --- CONFIGURATION ---
@@ -65,6 +81,208 @@ function getFileHash(content: string): string {
   return crypto.createHash("md5").update(content).digest("hex");
 }
 
+/**
+ * Applies the Dev Mission regex replacements
+ */
+function processDevMissions(data: any): any {
+  let jsonString = JSON.stringify(data);
+
+  const replacements = [
+    { searchText: "EventFlag", replacementText: "NotEventFlag" },
+    {
+      searchText: "activeQuestDefinitions",
+      replacementText: "NotactiveQuestDefinitions",
+    },
+    { searchText: "requirements", replacementText: "Notrequirements" },
+    {
+      searchText:
+        "/Script/Engine.DataTable'/Game/Balance/DataTables/GameDifficultyGrowthBounds.GameDifficultyGrowthBounds'",
+      replacementText: "powerlevel",
+    },
+    {
+      searchText: '"theaterType"\\s*:\\s*"Tutorial"',
+      replacementText: '"theaterType": "Standard"',
+    },
+    {
+      searchText: '"bHideLikeTestTheater":\\s*true',
+      replacementText: '"bHideLikeTestTheater": false',
+    },
+    {
+      searchText: '"missionGenerator"\\s*:\\s*"None"',
+      replacementText:
+        '"missionGenerator": "/SaveTheWorld/World/MissionGens/MissionGen_T1_HT_EvacuateTheSurvivors.MissionGen_T1_HT_EvacuateTheSurvivors_C"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone02"',
+      replacementText: '"Theater_Start_Zone2"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone03"',
+      replacementText: '"Theater_Start_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone03"',
+      replacementText: '"Theater_Start_Group_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone05"',
+      replacementText: '"Theater_Start_Zone5"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone05"',
+      replacementText: '"Theater_Start_Group_Zone5"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone07"',
+      replacementText: '"Theater_Normal_Zone2"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone07"',
+      replacementText: '"Theater_Normal_Group_Zone2"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone09"',
+      replacementText: '"Theater_Normal_Zone4"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone09"',
+      replacementText: '"Theater_Normal_Group_Zone4"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone11"',
+      replacementText: '"Theater_Hard_Zone1"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone11"',
+      replacementText: '"Theater_Hard_Group_Zone1"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone13"',
+      replacementText: '"Theater_Hard_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone13"',
+      replacementText: '"Theater_Hard_Group_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone15"',
+      replacementText: '"Theater_Hard_Zone5"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone15"',
+      replacementText: '"Theater_Hard_Group_Zone5"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone17"',
+      replacementText: '"Theater_Nightmare_Zone2"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone17"',
+      replacementText: '"Theater_Nightmare_Group_Zone2"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone19"',
+      replacementText: '"Theater_Nightmare_Zone4"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone19"',
+      replacementText: '"Theater_Nightmare_Group_Zone4"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone21"',
+      replacementText: '"Theater_Endgame_Zone1"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone21"',
+      replacementText: '"Theater_Endgame_Group_Zone1"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone23"',
+      replacementText: '"Theater_Endgame_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone23"',
+      replacementText: '"Theater_Endgame_Group_Zone3"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Zone25"',
+      replacementText: '"Theater_Endgame_Zone5"',
+    },
+    {
+      searchText: '"Theater_Phoenix_Group_Zone25"',
+      replacementText: '"Theater_Endgame_Group_Zone5"',
+    },
+    {
+      searchText: '"theaterSlot"\\s*:\\s*2',
+      replacementText: '"theaterSlot": 0',
+    },
+    { searchText: "HV3_01", replacementText: "Start_Zone4" },
+    { searchText: "HV3_02", replacementText: "Start_Zone5" },
+    { searchText: "HV3_03", replacementText: "Normal_Zone2" },
+    { searchText: "HV3_04", replacementText: "Normal_Zone4" },
+    { searchText: "HV3_05", replacementText: "Hard_Zone1" },
+    { searchText: "HV3_06", replacementText: "Hard_Zone3" },
+    { searchText: "HV3_07", replacementText: "Hard_Zone5" },
+    { searchText: "HV3_08", replacementText: "Nightmare_Zone2" },
+    { searchText: "HV3_09", replacementText: "Nightmare_Zone4" },
+    { searchText: "HV3_10", replacementText: "Endgame_Zone1" },
+    { searchText: "HV3_11", replacementText: "Endgame_Zone3" },
+    { searchText: "HV3_12", replacementText: "Endgame_Zone5" },
+    { searchText: "_Starlight_Start_Zone2", replacementText: "_Start_Zone3" },
+    {
+      searchText: "_StarlightTimed_Start_Zone2",
+      replacementText: "_Start_Zone3",
+    },
+    { searchText: "Theater_Starlight_", replacementText: "Theater_" },
+    { searchText: "_StarlightTimed_", replacementText: "_" },
+    { searchText: "Theater_Endless_", replacementText: "Theater_" },
+    {
+      searchText: "Theater_Mayday_Start_Zone5",
+      replacementText: "Theater_Start_Zone5",
+    },
+    {
+      searchText: "Theater_Mayday_Normal_Zone3",
+      replacementText: "Theater_Normal_Zone3",
+    },
+    {
+      searchText: "Theater_Mayday_Normal_Zone5",
+      replacementText: "Theater_Normal_Zone5",
+    },
+    {
+      searchText: "Theater_Mayday_Hard_Zone3",
+      replacementText: "Theater_Hard_Zone3",
+    },
+    {
+      searchText: "Theater_Mayday_Hard_Zone5",
+      replacementText: "Theater_Hard_Zone5",
+    },
+    {
+      searchText: "Theater_Mayday_Nightmare_Zone3",
+      replacementText: "Theater_Nightmare_Zone3",
+    },
+    {
+      searchText: "Theater_Mayday_Nightmare_Zone5",
+      replacementText: "Theater_Nightmare_Zone5",
+    },
+    {
+      searchText: "Theater_Mayday_Endgame_Zone5",
+      replacementText: "Theater_Endgame_Zone5",
+    },
+  ];
+
+  for (const item of replacements) {
+    const regex = new RegExp(item.searchText, "gi");
+    jsonString = jsonString.replace(regex, item.replacementText);
+  }
+
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    console.error("Failed to re-parse JSON in processDevMissions", e);
+    return data;
+  }
+}
+
 export async function runAutoAlerts(
   client: Client,
   channelId: string,
@@ -77,6 +295,7 @@ export async function runAutoAlerts(
     console.log("[ALERTS] Checking for new mission rotation...");
 
     // 1. Force Sync
+    // This updates the main 'daily_missions.json'
     await forceSyncMissions();
 
     // 2. Read Data
@@ -97,9 +316,72 @@ export async function runAutoAlerts(
       return;
     }
 
-    console.log("[ALERTS] New rotation detected! Generating embeds...");
+    console.log("[ALERTS] New rotation detected! Processing...");
 
-    // --- PREPARE DATA ---
+    const dateSuffix = new Date().toISOString().split("T")[0];
+
+    // --- STEP 4: GENERATE, CACHE, AND SEND FILES ---
+    // We prepare the 3 types of files, SAVE them to disk, then send them.
+
+    const filesToSend: AttachmentBuilder[] = [];
+
+    // A. Normal File (Already cached by sync-utils, just read/attach)
+    filesToSend.push(
+      new AttachmentBuilder(CACHE_PATH, {
+        name: `world-info-raw-${dateSuffix}.json`,
+      })
+    );
+
+    // B. Remove All GUIDs
+    try {
+      const noGuidData = JSON.parse(JSON.stringify(worldData));
+      if (Array.isArray(noGuidData.missions)) {
+        noGuidData.missions = noGuidData.missions.map((mission: any) => {
+          delete mission.missionGuid;
+          return mission;
+        });
+      }
+      const noGuidString = JSON.stringify(noGuidData, null, 2);
+
+      // Save to disk
+      fs.writeFileSync(CACHE_NO_GUIDS_PATH, noGuidString);
+      console.log(`[ALERTS] Cached No-GUIDs file to ${CACHE_NO_GUIDS_PATH}`);
+
+      // Add to attachment list
+      filesToSend.push(
+        new AttachmentBuilder(Buffer.from(noGuidString, "utf-8"), {
+          name: `world-info-no_guids-${dateSuffix}.json`,
+        })
+      );
+    } catch (err) {
+      console.error("Error creating No GUIDs file:", err);
+    }
+
+    // C. Dev Missions
+    try {
+      const devData = processDevMissions(worldData);
+      const devString = JSON.stringify(devData, null, 2);
+
+      // Save to disk
+      fs.writeFileSync(CACHE_DEV_PATH, devString);
+      console.log(`[ALERTS] Cached Dev Missions file to ${CACHE_DEV_PATH}`);
+
+      // Add to attachment list
+      filesToSend.push(
+        new AttachmentBuilder(Buffer.from(devString, "utf-8"), {
+          name: `world-info-dev_missions-${dateSuffix}.json`,
+        })
+      );
+    } catch (err) {
+      console.error("Error creating Dev Missions file:", err);
+    }
+
+    // Send the files immediately
+    if (filesToSend.length > 0) {
+      console.log("[ALERTS] Mission files uploaded.");
+    }
+
+    // --- STEP 5: GENERATE & SEND EMBEDS ---
     const missionLookup = new Map();
     worldData.missions.forEach((t: any) =>
       t.availableMissions.forEach((m: any) =>
@@ -203,19 +485,14 @@ export async function runAutoAlerts(
     });
 
     // --- SEND EMBEDS ---
-    const dateStr = new Date().toLocaleDateString("en-GB");
-
     for (const category of ALERT_CATEGORIES) {
       const zoneData = categoryResults[category.name];
       const zonesFound = Object.keys(zoneData);
 
       // --- EMOJI RESOLUTION ---
-      // 1. Use manual emoji if provided (e.g., ⚡ for 160s)
-      // 2. Otherwise, resolve the emoji from the 'filter' ID using itemUtils
       let titleEmoji = category.emoji;
       if (!titleEmoji) {
         const resolved = resolveItem(category.filter);
-        // Fallback to ? if resolution fails (shouldn't happen for valid items)
         titleEmoji = resolved.type !== "unknown" ? resolved.emoji : "❓";
       }
 

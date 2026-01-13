@@ -175,4 +175,27 @@ export function recordMultipleMissions(
   return result.count;
 }
 
+/**
+ * Fetches stats for a user specifically for the current calendar month.
+ */
+export function getUserMonthlyStats(userId: string) {
+  const now = new Date();
+  // Set to the first day of the current month at 00:00:00
+  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  const stmt = db.prepare(
+    "SELECT type, COUNT(*) as count FROM mission_history WHERE userId = ? AND timestamp >= ? GROUP BY type"
+  );
+  const rows = stmt.all(userId, startOfMonth) as any[];
+
+  let hosts = 0,
+    leeches = 0;
+  rows.forEach((row) => {
+    if (row.type === "host") hosts = row.count;
+    if (row.type === "leech") leeches = row.count;
+  });
+
+  return { hosts, leeches, total: hosts + leeches };
+}
+
 export { db };

@@ -1,15 +1,12 @@
 import {
-  ChatInputCommandInteraction,
   SlashCommandBuilder,
-  EmbedBuilder,
+  ChatInputCommandInteraction,
+  AttachmentBuilder,
 } from "discord.js";
 import fs from "fs";
 import path from "path";
-import { forceSyncMissions } from "../../utils/sync-utils.js";
-import { runAutoAlerts } from "../../services/auto-alerts.js";
-import "dotenv/config";
 
-// --- FILE PATHS ---
+// Define Cache Paths
 const CACHE_PATH = path.join(process.cwd(), "src", "daily_missions.json");
 const CACHE_NO_MODS_PATH = path.join(
   process.cwd(),
@@ -23,114 +20,109 @@ const CACHE_DEV_PATH = path.join(
 );
 
 export const data = new SlashCommandBuilder()
-  .setName("refresh")
-  .setDescription("Admin ONLY: Force a manual refresh of STW mission data")
-  .addBooleanOption((option) =>
+  .setName("get-file")
+  .setDescription("Download the world/info JSON file with optional filtering.")
+  .addStringOption((option) =>
     option
-      .setName("resend_feeds")
-      .setDescription(
-        "Should the bot resend the mission alerts to the channel?"
+      .setName("filter")
+      .setDescription("Choose how to filter the data")
+      .setRequired(false)
+      .addChoices(
+        { name: "Normal", value: "normal" },
+        { name: "Remove All Mods", value: "remove_all_mods" },
+        { name: "Dev Missions", value: "dev_missions" }
       )
-      .setRequired(true)
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
-  const adminIds = process.env.ADMIN_IDS?.split(",") || [];
-
-  if (!adminIds.includes(interaction.user.id)) {
-    return await interaction.reply({
-      embeds: [
-        new EmbedBuilder()
-          .setColor("Red")
-          .setDescription(
-            "❌ **Access Denied:** You are not authorized to use this command."
-          ),
-      ],
-      ephemeral: true,
-    });
-  }
-
-  await interaction.deferReply({ ephemeral: true });
-
   try {
-    // 1. Force the API Sync (updates daily_missions.json)
-    const result = await forceSyncMissions();
-    const embed = new EmbedBuilder().setTimestamp();
+    await interaction.deferReply();
 
-    if (result.success) {
-      let statusDescription = "✅ **Mission data refreshed successfully.**";
-
-      // 2. GENERATE & CACHE DERIVED FILES (No GUIDs / Dev Missions)
-      try {
-        if (fs.existsSync(CACHE_PATH)) {
-          const rawContent = fs.readFileSync(CACHE_PATH, "utf-8");
-          const worldData = JSON.parse(rawContent);
-
-          // A. Cache "No GUIDs" File
-          const noGuidData = JSON.parse(JSON.stringify(worldData));
-          if (Array.isArray(noGuidData.missions)) {
-            noGuidData.missions = noGuidData.missions.map((mission: any) => {
-              delete mission.missionGuid;
-              return mission;
-            });
-          }
-          fs.writeFileSync(
-            CACHE_NO_MODS_PATH,
-            JSON.stringify(noGuidData, null, 2)
-          );
-
-          // B. Cache "Dev Missions" File
-          const devData = processDevMissions(worldData);
-          fs.writeFileSync(CACHE_DEV_PATH, JSON.stringify(devData, null, 2));
-
-          statusDescription +=
-            "\n💾 **Cache Updated:** Generated No-GUIDs & Dev files.";
-        }
-      } catch (cacheError) {
-        console.error("Error generating cache files:", cacheError);
-        statusDescription +=
-          "\n⚠️ **Cache Warning:** Failed to generate derived files.";
-      }
-
-      // 3. Handle Feed Resending
-      const resend = interaction.options.getBoolean("resend_feeds");
-      if (resend) {
-        const channelId = process.env.ALERT_CHANNEL_ID;
-        if (!channelId) {
-          statusDescription +=
-            "\n⚠️ Feeds not sent: `ALERT_CHANNEL_ID` missing in .env.";
-        } else {
-          // Pass 'true' to bypass cooldown and ensure sync
-          await runAutoAlerts(interaction.client, channelId, true);
-          statusDescription += `\n📤 **Feeds Resent:** Alerts posted to <#${channelId}>.`;
-        }
-      }
-
-      embed
-        .setTitle("System Update")
-        .setDescription(statusDescription)
-        .setColor(0x43b581); // Green
-    } else {
-      embed
-        .setTitle("Update Failed")
-        .setDescription(`❌ Sync error: \`${result.error}\``)
-        .setColor(0xf04747); // Red
+    // Ensure the main source exists at minimum
+    if (!fs.existsSync(CACHE_PATH)) {
+      return await interaction.editReply(
+        "❌ Mission data unavailable. Please run a sync first."
+      );
     }
 
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error: any) {
-    console.error("Refresh Command Error:", error);
-    const errorEmbed = new EmbedBuilder()
-      .setTitle("System Error")
-      .setDescription("❌ An unexpected error occurred during execution.")
-      .setColor(0xf04747);
+    const filter = interaction.options.getString("filter") || "normal";
+    const dateSuffix = new Date().toISOString().split("T")[0];
 
-    await interaction.editReply({ embeds: [errorEmbed] });
+    // --- STRATEGY: Try to serve from Cache first ---
+
+    // 1. Normal (Raw)
+    if (filter === "normal") {
+      const file = new AttachmentBuilder(CACHE_PATH, {
+        name: `world-info-raw-${dateSuffix}.json`,
+      });
+      return await interaction.editReply({ files: [file] });
+    }
+
+    // 2. Remove All Mods (No GUIDs)
+    if (filter === "remove_all_mods") {
+      // Check Cache First
+      if (fs.existsSync(CACHE_NO_MODS_PATH)) {
+        const file = new AttachmentBuilder(CACHE_NO_MODS_PATH, {
+          name: `world-info-no_mods-${dateSuffix}.json`,
+        });
+        return await interaction.editReply({ files: [file] });
+      } else {
+        // Fallback: Generate if cache missing
+        console.log("Cache missing for No Mods. Generating on the fly...");
+        const rawData = fs.readFileSync(CACHE_PATH, "utf-8");
+        const jsonData = JSON.parse(rawData);
+
+        if (Array.isArray(jsonData.missions)) {
+          jsonData.missions = jsonData.missions.map((mission: any) => {
+            delete mission.missionGuid;
+            return mission;
+          });
+        }
+
+        const buffer = Buffer.from(JSON.stringify(jsonData, null, 2), "utf-8");
+        const file = new AttachmentBuilder(buffer, {
+          name: `world-info-no_mods-${dateSuffix}.json`,
+        });
+        return await interaction.editReply({ files: [file] });
+      }
+    }
+
+    // 3. Dev Missions
+    if (filter === "dev_missions") {
+      // Check Cache First
+      if (fs.existsSync(CACHE_DEV_PATH)) {
+        const file = new AttachmentBuilder(CACHE_DEV_PATH, {
+          name: `world-info-dev_missions-${dateSuffix}.json`,
+        });
+        return await interaction.editReply({ files: [file] });
+      } else {
+        // Fallback: Generate if cache missing
+        console.log("Cache missing for Dev Missions. Generating on the fly...");
+        const rawData = fs.readFileSync(CACHE_PATH, "utf-8");
+        const jsonData = JSON.parse(rawData);
+        const processedData = processDevMissions(jsonData);
+
+        const buffer = Buffer.from(
+          JSON.stringify(processedData, null, 2),
+          "utf-8"
+        );
+        const file = new AttachmentBuilder(buffer, {
+          name: `world-info-dev_missions-${dateSuffix}.json`,
+        });
+        return await interaction.editReply({ files: [file] });
+      }
+    }
+  } catch (error: any) {
+    console.error("Export Error:", error);
+    await interaction.editReply(
+      "❌ An error occurred while uploading the file."
+    );
   }
 }
 
 /**
- * Applies the Dev Mission regex replacements
+ * Fallback: Applies the Dev Mission regex replacements
+ * (Used only if cached file is missing)
  */
 function processDevMissions(data: any): any {
   let jsonString = JSON.stringify(data);
