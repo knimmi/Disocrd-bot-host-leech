@@ -2,29 +2,38 @@ import {
   ChatInputCommandInteraction,
   EmbedBuilder,
   SlashCommandBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ComponentType,
 } from "discord.js";
 import fs from "fs";
 import path from "path";
+import { THEATER_MAP, ZONE_ORDER } from "../utils/maps.js";
 import {
-  getPLFromRowName,
-  getMissionEmoji,
-  formatReward,
-  formatNumber,
-  getItemEmoji,
-} from "../utils/alerts-utils.js";
+  getPowerLevel,
+  resolveMissionType,
+  resolveZone,
+} from "../utils/zone-utils.js";
+import {
+  checkRewardMatch,
+  is160Mission,
+  aggregateRewards,
+} from "../utils/filters.js";
+
+import { resolveItem, getMissionEmoji } from "../utils/itemUtils.js";
 
 const REWARD_CHOICES = [
   { name: "V-Bucks", value: "currency_mtxswap" },
-  { name: "Mythic Leads", value: "manager" },
+  { name: "Mythic Leads", value: "filter_mythic_lead" },
   { name: "Upgrade Llama Tokens", value: "voucher_cardpack_bronze" },
   { name: "Mini Llamas", value: "voucher_basicpack" },
   { name: "Masters Driver", value: "sid_blunt_club_light" },
   { name: "Fortsville Slugger 3000", value: "sid_blunt_light_rocketbat" },
   { name: "Power B.A.S.E. Knox", value: "hid_constructor_008" },
-  { name: "Legendary Survivor", value: "workerbasic_sr_t03" },
+  { name: "Legendary Survivor", value: "workerbasic_sr_t0" },
   { name: "Legendary Schematics", value: "filter_leg_schematic" },
   { name: "Legendary Heroes", value: "filter_leg_hero" },
-  // Epic Perk-Up removed from here
   { name: "Fire-Up", value: "reagent_alteration_ele_fire" },
   { name: "Frost-Up", value: "reagent_alteration_ele_water" },
   { name: "Amp-Up", value: "reagent_alteration_ele_nature" },
@@ -34,8 +43,8 @@ const REWARD_CHOICES = [
 export const data = new SlashCommandBuilder()
   .setName("alerts")
   .setDescription("Scan STW mission alerts for specific rewards")
-  .addStringOption((option) =>
-    option
+  .addStringOption((o) =>
+    o
       .setName("reward")
       .setDescription("The reward to search for")
       .setRequired(true)
@@ -45,186 +54,294 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction: ChatInputCommandInteraction) {
   try {
     await interaction.deferReply();
-
     const cachePath = path.join(process.cwd(), "src", "daily_missions.json");
-    const resetPath = path.join(process.cwd(), "src", "last_reset.json");
 
-    if (!fs.existsSync(cachePath) || !fs.existsSync(resetPath)) {
-      return await interaction.editReply(
-        "❌ Mission data is currently unavailable. Please wait for the daily sync."
-      );
+    if (!fs.existsSync(cachePath)) {
+      return await interaction.editReply("❌ Mission data unavailable.");
     }
 
-    const resetData = JSON.parse(fs.readFileSync(resetPath, "utf8"));
-    const lastRun = resetData.lastRunTimestamp || 0;
-    const now = Date.now();
-    const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-
-    const isStale = now - lastRun > TWENTY_FOUR_HOURS;
-
     const worldData = JSON.parse(fs.readFileSync(cachePath, "utf8"));
-    const fileStats = fs.statSync(cachePath);
-    const lastUpdated = new Date(lastRun || fileStats.mtime);
-
-    const { theaters, missionAlerts, missions: missionData } = worldData;
-    const theaterNames: Record<string, string> = {};
-    theaters.forEach((t: any) => (theaterNames[t.uniqueId] = t.displayName.en));
 
     const missionLookup = new Map();
-    missionData.forEach((theater: any) => {
-      theater.availableMissions.forEach((m: any) =>
-        missionLookup.set(`${theater.theaterId}-${m.tileIndex}`, m)
-      );
-    });
+    worldData.missions.forEach((t: any) =>
+      t.availableMissions.forEach((m: any) =>
+        missionLookup.set(`${t.theaterId}-${m.tileIndex}`, m)
+      )
+    );
 
     const selectedReward = interaction.options.getString("reward") || "";
     const rewardDisplayName =
-      REWARD_CHOICES.find((c: any) => c.value === selectedReward)?.name ||
-      "Rewards";
+      REWARD_CHOICES.find((c) => c.value === selectedReward)?.name || "Rewards";
 
-    const groupedResults: Record<string, { quantity: number; text: string }[]> =
+    // Format time for footer "Today at HH:MM"
+    const timeString = new Date().toLocaleTimeString("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const footerText = ` • Today at ${timeString}`;
+
+    // { line: string, value: number } used for sorting
+    const groupedResults: Record<string, { line: string; value: number }[]> =
       {};
-    let totalSelectedReward = 0;
+    let totalCount = 0;
 
-    missionAlerts.forEach((tGroup: any) => {
+    // --- MAIN LOOP ---
+    worldData.missionAlerts.forEach((tGroup: any) => {
       const theaterId = tGroup.theaterId;
-      if (!tGroup.availableMissionAlerts) return;
 
-      tGroup.availableMissionAlerts.forEach((alert: any) => {
+      tGroup.availableMissionAlerts?.forEach((alert: any) => {
         const mInfo = missionLookup.get(`${theaterId}-${alert.tileIndex}`);
         if (!mInfo) return;
 
-        const pl = getPLFromRowName(
+        const plNum = getPowerLevel(
           theaterId,
-          mInfo.missionDifficultyInfo?.rowName ||
-            mInfo.difficultyInfo?.rowName ||
-            ""
+          mInfo.missionDifficultyInfo?.rowName || ""
         );
+        const pl = plNum > 0 ? plNum.toString() : "??";
 
-        let displayItems: any[] = [];
+        const alertItems = alert.missionAlertRewards?.items || [];
         let isMatch = false;
-        let currentMissionQuantity = 0;
+        let displayRewardsText = "";
+        let sortValue = 0;
 
+        // CASE 1: 160 Zones
         if (selectedReward === "filter_160") {
-          if (pl === "160") {
+          if (is160Mission(pl)) {
             isMatch = true;
-            const rawRewards = (mInfo.missionRewards?.items || []).filter(
-              (i: any) => {
-                const type = i.itemType.toLowerCase();
-                return (
-                  !type.includes("gold") &&
-                  !type.includes("eventscaling") &&
-                  !type.includes("eventcurrency")
-                );
-              }
-            );
-            const groupedRewards: Record<string, number> = {};
-            rawRewards.forEach((item: any) => {
-              groupedRewards[item.itemType] =
-                (groupedRewards[item.itemType] || 0) + item.quantity;
+
+            // 1. Grab Base Rewards ONLY
+            const rawRewards = mInfo.missionRewards?.items || [];
+
+            // 2. Filter Logic: REMOVE GOLD ONLY
+            const filtered = rawRewards.filter((i: any) => {
+              const type = i.itemType.toLowerCase();
+              return (
+                !type.includes("eventcurrency") &&
+                !type.includes("eventscaling") &&
+                !type.includes("currency_scaling")
+              );
             });
-            displayItems = Object.keys(groupedRewards).map((type) => ({
-              itemType: type,
-              quantity: groupedRewards[type],
-            }));
+
+            // Calculate Sort Value (Sum of quantities)
+            sortValue = filtered.reduce(
+              (sum: number, item: any) => sum + item.quantity,
+              0
+            );
+
+            // 3. Aggregate
+            const aggregated = aggregateRewards(filtered);
+
+            // 4. Generate Text
+            if (aggregated.length > 0) {
+              displayRewardsText = aggregated
+                .map((i: any) => {
+                  const item = resolveItem(i.itemType);
+                  // Format: "5x 🦀" (NO NAMES)
+                  return `**${i.quantity}x** ${item.emoji}`;
+                })
+                .join(", ");
+            } else {
+              displayRewardsText = "*(No Non-Gold Rewards)*";
+            }
           }
-        } else {
-          const alertItems = alert.missionAlertRewards?.items || [];
-          const matchingItems = alertItems.filter((i: any) => {
-            const rawType = i.itemType.toLowerCase();
-            const cleanType = rawType.split(":").pop() || "";
+        }
+        // CASE 2: Specific Item Search
+        else {
+          isMatch = alertItems.some((i: any) =>
+            checkRewardMatch(i.itemType, selectedReward)
+          );
 
-            // Logic check: Explicitly ignore Epic Perk-Up if it somehow reaches here
-            if (cleanType === "reagent_alteration_upgrade_vr") return false;
-
-            if (selectedReward === "filter_leg_schematic")
-              return cleanType.startsWith("sid_") && cleanType.includes("_sr_");
-            if (selectedReward === "filter_leg_hero")
-              return cleanType.startsWith("hid_") && cleanType.includes("_sr_");
-            return (
-              cleanType === selectedReward.toLowerCase() ||
-              rawType.includes(selectedReward.toLowerCase()) ||
-              (selectedReward === "manager" && cleanType.includes("manager")) ||
-              (selectedReward === "voucher_basicpack" &&
-                (cleanType.includes("voucher_basicpack") ||
-                  cleanType.includes("cardpack_mini")))
+          if (isMatch) {
+            const specificItems = alertItems.filter((i: any) =>
+              checkRewardMatch(i.itemType, selectedReward)
             );
-          });
 
-          if (matchingItems.length > 0) {
-            isMatch = true;
-            displayItems = alertItems;
-            matchingItems.forEach(
-              (i: any) => (currentMissionQuantity += i.quantity)
+            const currentTotal = specificItems.reduce(
+              (acc: number, i: any) => acc + i.quantity,
+              0
             );
+            totalCount += currentTotal;
+            sortValue = currentTotal;
+
+            displayRewardsText = alertItems
+              .map((i: any) => {
+                const item = resolveItem(i.itemType);
+                const isTarget = checkRewardMatch(i.itemType, selectedReward);
+                // Bold quantity only if it matches the search
+                const quantityStr = isTarget
+                  ? `**${i.quantity}x**`
+                  : `${i.quantity}x`;
+                // Format: "10x 🎟️" (NO NAMES)
+                return `${quantityStr} ${item.emoji}`;
+              })
+              .join(", ");
           }
         }
 
         if (isMatch) {
-          const zone = theaterNames[theaterId] || "Unknown Zone";
+          const zone = resolveZone(theaterId);
           if (!groupedResults[zone]) groupedResults[zone] = [];
 
-          let rewardText;
-          if (selectedReward === "filter_160") {
-            displayItems.forEach(
-              (i: any) => (currentMissionQuantity += i.quantity)
-            );
-            rewardText = displayItems
-              .map((i: any) => `${i.quantity}x ${getItemEmoji(i.itemType)}`)
-              .join(", ");
-          } else {
-            rewardText = displayItems
-              .map((i: any) => formatReward(i.itemType, i.quantity))
-              .join(", ");
+          const missionName = resolveMissionType(mInfo.missionGenerator);
+
+          // --- MISSION ICON LOGIC ---
+          let missionIcon = getMissionEmoji(missionName);
+
+          // OVERRIDE: Check if the alert name matches the MSK ID
+          if (alert.name === "MissionAlert_DudebroCategory_03") {
+            // Force MSK Emoji
+            missionIcon = getMissionEmoji("Mythic Storm King");
           }
 
-          if (rewardText) {
-            totalSelectedReward += currentMissionQuantity;
-            groupedResults[zone].push({
-              quantity: currentMissionQuantity,
-              text: `${getMissionEmoji(
-                mInfo.missionGenerator
-              )} ⚡ \`${pl.padEnd(3)}\` | ${rewardText}`,
-            });
-          }
+          groupedResults[zone].push({
+            // REMOVED ${missionName}. Layout: Icon ⚡ PL | Rewards
+            line: `${missionIcon} ⚡ \`${pl}\` | ${displayRewardsText}`,
+            value: sortValue,
+          });
         }
       });
     });
 
-    const embed = new EmbedBuilder()
-      .setTitle(`Mission Alerts For: ${rewardDisplayName}`)
-      .setColor(isStale ? "#FFA500" : "#5865F2")
-      .setFooter({
-        text: `Total: ${formatNumber(totalSelectedReward)}`,
-      })
-      .setTimestamp();
+    // --- SORTING ZONES ---
+    const sortedZones = Object.keys(groupedResults).sort(
+      (a, b) =>
+        ZONE_ORDER.indexOf(
+          Object.keys(THEATER_MAP).find((k) => THEATER_MAP[k] === a)!
+        ) -
+        ZONE_ORDER.indexOf(
+          Object.keys(THEATER_MAP).find((k) => THEATER_MAP[k] === b)!
+        )
+    );
 
-    const zones = Object.keys(groupedResults);
-    if (zones.length === 0) {
-      embed.setDescription(
-        `❌ No missions found for **${rewardDisplayName}**.`
-      );
-    } else {
-      zones.forEach((zone) => {
-        let sortedText = groupedResults[zone]
-          .sort((a, b) => b.quantity - a.quantity)
-          .map((m) => m.text)
-          .join("\n");
-        if (sortedText.length > 1024) {
-          sortedText =
-            sortedText.substring(0, sortedText.lastIndexOf("\n", 1021)) +
-            "\n...";
+    // --- EMPTY STATE ---
+    if (sortedZones.length === 0) {
+      const noMissionsEmbed = new EmbedBuilder()
+        .setTitle(`STW Alerts For: ${rewardDisplayName}`)
+        .setColor("#FF0000")
+        .setDescription(
+          `❌ No missions found for **${rewardDisplayName}**.\nBetter luck next reset!`
+        )
+        .setFooter({ text: footerText })
+        .setTimestamp();
+
+      return await interaction.editReply({ embeds: [noMissionsEmbed] });
+    }
+
+    // --- PAGINATION ---
+    const pages: string[] = [];
+    let currentPageContent = "";
+    const MAX_MISSIONS_PER_ZONE = 20;
+    const MAX_CHARS_PER_PAGE = 3800;
+
+    for (const zone of sortedZones) {
+      // SORT BY VALUE DESCENDING
+      const rawMissions = groupedResults[zone];
+      rawMissions.sort((a, b) => b.value - a.value);
+
+      let missions = rawMissions.map((x) => x.line);
+      const zoneHeader = `**${zone.toUpperCase()}**`;
+
+      if (missions.length > MAX_MISSIONS_PER_ZONE) {
+        const remaining = missions.length - MAX_MISSIONS_PER_ZONE;
+        missions = missions.slice(0, MAX_MISSIONS_PER_ZONE);
+        missions.push(`*...and ${remaining} more hidden.*`);
+      }
+
+      const zoneMissions = missions.join("\n");
+      const zoneBlock = `${zoneHeader}\n${zoneMissions}\n\n`;
+
+      if (currentPageContent.length + zoneBlock.length > MAX_CHARS_PER_PAGE) {
+        if (currentPageContent.length > 0) {
+          pages.push(currentPageContent);
+          currentPageContent = "";
         }
-        embed.addFields({
-          name: `${zone.toUpperCase()}`,
-          value: sortedText,
+        if (zoneBlock.length > MAX_CHARS_PER_PAGE) {
+          const safeBlock =
+            zoneBlock.substring(0, MAX_CHARS_PER_PAGE - 100) +
+            "\n...(Truncated)";
+          pages.push(safeBlock);
+        } else {
+          currentPageContent = zoneBlock;
+        }
+      } else {
+        currentPageContent += zoneBlock;
+      }
+    }
+
+    if (currentPageContent.length > 0) {
+      pages.push(currentPageContent);
+    }
+
+    const generateEmbed = (pageIndex: number) => {
+      return new EmbedBuilder()
+        .setTitle(`STW Alerts For: ${rewardDisplayName}`)
+        .setColor("#5865F2")
+        .setDescription(pages[pageIndex])
+        .setFooter({
+          text: `Total Items: ${formatNumber(totalCount)}${footerText}`,
         });
+    };
+
+    if (pages.length === 1) {
+      return await interaction.editReply({
+        embeds: [generateEmbed(0)],
+        components: [],
       });
     }
-    await interaction.editReply({ embeds: [embed] });
-  } catch (error: any) {
-    console.error("Error:", error.message);
-    if (interaction.deferred)
-      await interaction.editReply("❌ Error reading mission data.");
+
+    let currentPage = 0;
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId("prev")
+        .setLabel("⬅️ Previous")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(true),
+      new ButtonBuilder()
+        .setCustomId("next")
+        .setLabel("Next ➡️")
+        .setStyle(ButtonStyle.Primary)
+        .setDisabled(false)
+    );
+
+    const res = await interaction.editReply({
+      embeds: [generateEmbed(0)],
+      components: [row],
+    });
+
+    const collector = res.createMessageComponentCollector({
+      componentType: ComponentType.Button,
+      time: 120000,
+    });
+
+    collector.on("collect", async (i) => {
+      if (i.user.id !== interaction.user.id) return;
+
+      if (i.customId === "next") currentPage++;
+      else currentPage--;
+
+      const updatedRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId("prev")
+          .setLabel("⬅️ Previous")
+          .setStyle(ButtonStyle.Secondary)
+          .setDisabled(currentPage === 0),
+        new ButtonBuilder()
+          .setCustomId("next")
+          .setLabel("Next ➡️")
+          .setStyle(ButtonStyle.Primary)
+          .setDisabled(currentPage === pages.length - 1)
+      );
+
+      await i.update({
+        embeds: [generateEmbed(currentPage)],
+        components: [updatedRow],
+      });
+    });
+  } catch (e) {
+    console.error(e);
   }
+}
+
+function formatNumber(num: number): string {
+  return num.toLocaleString("nl-NL");
 }

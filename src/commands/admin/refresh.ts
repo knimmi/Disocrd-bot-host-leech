@@ -10,8 +10,7 @@ import "dotenv/config";
 
 export const data = new SlashCommandBuilder()
   .setName("refresh")
-  .setDescription("ADMIN ONLY: Force a manual refresh of STW mission data")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .setDescription("Admin ONLY: Force a manual refresh of STW mission data")
   .addBooleanOption((option) =>
     option
       .setName("resend_feeds")
@@ -26,7 +25,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
   if (!adminIds.includes(interaction.user.id)) {
     return await interaction.reply({
-      content: "❌ You do not have permission to use this command.",
+      embeds: [
+        new EmbedBuilder()
+          .setColor("Red")
+          .setDescription(
+            "❌ **Access Denied:** You are not authorized to use this command."
+          ),
+      ],
       ephemeral: true,
     });
   }
@@ -47,7 +52,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
           statusDescription +=
             "\n⚠️ Feeds not sent: `ALERT_CHANNEL_ID` missing in .env.";
         } else {
-          // Pass 'true' to bypass the 24h cooldown check
+          // Pass 'true' to bypass the 24h cooldown check if needed
           await runAutoAlerts(interaction.client, channelId, true);
           statusDescription += `\n📤 **Feeds Resent:** Alerts posted to <#${channelId}>.`;
         }

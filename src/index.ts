@@ -28,6 +28,7 @@ const TOKEN = process.env.BOT_TOKEN as string;
 const CLIENT_ID = process.env.CLIENT_ID as string;
 const TRACKING_CHANNEL_ID = process.env.TRACKING_CHANNEL_ID as string;
 const AUTO_ALERTS_CHANNEL_ID = process.env.ALERT_CHANNEL_ID as string;
+
 const TRACKED_ROLE_IDS = [
   "1457117829340856546",
   "1457117863398605044",
@@ -254,7 +255,7 @@ client.once("ready", async () => {
   updateBotStatus(client);
   setInterval(() => updateBotStatus(client), 30 * 60 * 1000);
 
-  // --- AUTOMATED MISSION ALERTS ---
+  // --- AUTOMATED MISSION ALERTS (DISABLED) ---
   if (AUTO_ALERTS_CHANNEL_ID) {
     // 1. Run immediately on startup (will skip if already posted/cached)
     console.log("[STARTUP] Checking for mission alerts...");
@@ -262,7 +263,7 @@ client.once("ready", async () => {
 
     // 2. Schedule for future resets at 00:01 UTC
     cron.schedule(
-      "01 00 * * *",
+      "5 0 * * *",
       () => {
         console.log("[SCHEDULE] Triggering daily mission alerts...");
         runAutoAlerts(client, AUTO_ALERTS_CHANNEL_ID);

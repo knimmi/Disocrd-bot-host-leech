@@ -22,3 +22,4 @@ build/
 # System files
 .DS_Store
 Thumbs.db
+src/utils/itemUtils-vase.ts

@@ -1,256 +1,263 @@
-import { Client, EmbedBuilder, TextChannel } from "discord.js";
-import axios from "axios";
+import { Client, TextChannel, EmbedBuilder } from "discord.js";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
+import { forceSyncMissions } from "../utils/sync-utils.js";
+import { resolveItem, getMissionEmoji } from "../utils/itemUtils.js";
 import {
-  getPLFromRowName,
-  getMissionEmoji,
-  getItemEmoji,
-  formatNumber,
-  formatReward,
-} from "../utils/alerts-utils.js";
+  is160Mission,
+  aggregateRewards,
+  checkRewardMatch,
+} from "../utils/filters.js";
+import { THEATER_MAP, ZONE_ORDER } from "../utils/maps.js";
+import {
+  getPowerLevel,
+  resolveMissionType,
+  resolveZone,
+} from "../utils/zone-utils.js";
 
-const PC_BASIC =
-  "M2Y2OWU1NmM3NjQ5NDkyYzhjYzI5ZjFhZjA4YThhMTI6YjUxZWU5Y2IxMjIzNGY1MGE2OWVmYTY3ZWY1MzgxMmU=";
-const USER_AGENT =
-  "Fortnite/++Fortnite+Release-14.00-CL-32116959 Windows/10.0.22621.1.768.64bit";
+const CACHE_PATH = path.join(process.cwd(), "src", "daily_missions.json");
+const HASH_FILE_PATH = path.join(process.cwd(), "src", "last_alert_hash.txt");
 
-const FILTERS = [
-  { name: "160s", value: "filter_160" },
-  { name: "V-Bucks", value: "currency_mtxswap" },
-  { name: "Masters Driver", value: "sid_blunt_club_light" },
-  { name: "Fortsville Slugger 3000", value: "sid_blunt_light_rocketbat" },
-  { name: "Power B.A.S.E. Knox", value: "hid_constructor_008" },
-  { name: "Upgrade Llama Tokens", value: "voucher_cardpack_bronze" },
+// --- CONFIGURATION ---
+const ALERT_CATEGORIES = [
+  {
+    name: "V-Bucks",
+    filter: "currency_mtxswap",
+    color: 0x00bcf3,
+  },
+  {
+    name: "Mythic Leads",
+    filter: "filter_mythic_lead",
+    color: 0xffd700,
+    emoji: "👑",
+  },
+  {
+    name: "Upgrade Llama Tokens",
+    filter: "voucher_cardpack_bronze",
+    color: 0xa0522d,
+  },
+  {
+    name: "Power B.A.S.E. Knox",
+    filter: "hid_constructor_008",
+    color: 0xffa500,
+  },
+  {
+    name: "Masters Driver",
+    filter: "sid_blunt_club_light",
+    color: 0x9b59b6,
+  },
+  {
+    name: "Fortsville Slugger 3000",
+    filter: "sid_blunt_light_rocketbat",
+    color: 0x9b59b6,
+    emoji: "<:slugger:1457711578404098089>",
+  },
+  {
+    name: "160 Zones",
+    filter: "filter_160",
+    color: 0xff0000,
+    emoji: "⚡",
+  },
 ];
 
-// Added 'force = false' to allow manual overrides while keeping auto-restarts safe
+function getFileHash(content: string): string {
+  return crypto.createHash("md5").update(content).digest("hex");
+}
+
 export async function runAutoAlerts(
   client: Client,
   channelId: string,
-  force = false
+  force: boolean = false
 ) {
-  const resetPath = path.join(process.cwd(), "src", "last_reset.json");
-  const dailyMissionsPath = path.join(
-    process.cwd(),
-    "src",
-    "daily_missions.json"
-  );
-
-  const now = Date.now();
-  const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
-
-  // Check for 24h Cache
-  if (fs.existsSync(resetPath)) {
-    try {
-      const lastResetData = JSON.parse(fs.readFileSync(resetPath, "utf8"));
-      const lastRun = lastResetData.lastRunTimestamp || 0;
-
-      // Logic: Only skip if (!force) AND time is valid AND mission file exists
-      if (
-        !force &&
-        now - lastRun < TWENTY_FOUR_HOURS &&
-        fs.existsSync(dailyMissionsPath)
-      ) {
-        const remainingMs = TWENTY_FOUR_HOURS - (now - lastRun);
-        const remainingHours = (remainingMs / (1000 * 60 * 60)).toFixed(1);
-        console.log(
-          `[Auto-Alerts] Cache valid. Skipping. Next run available in ${remainingHours} hours.`
-        );
-        return;
-      }
-    } catch (err) {
-      console.error("Error reading cache file, proceeding with fetch.");
-    }
-  }
-
-  const channel = client.channels.cache.get(channelId) as TextChannel;
-  if (!channel) return console.error("Invalid channel ID for auto-alerts.");
-
   try {
-    // Authentication
-    const credsPath = path.join(process.cwd(), "src", "credentials.json");
-    const { accountId, deviceId, secret } = JSON.parse(
-      fs.readFileSync(credsPath, "utf8")
-    );
+    const channel = (await client.channels.fetch(channelId)) as TextChannel;
+    if (!channel) return console.error("[ALERTS] Invalid Channel ID.");
 
-    const authRes = await axios.post(
-      "https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token",
-      new URLSearchParams({
-        grant_type: "device_auth",
-        account_id: accountId,
-        device_id: deviceId,
-        secret,
-      }).toString(),
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-          Authorization: `basic ${PC_BASIC}`,
-        },
-      }
-    );
+    console.log("[ALERTS] Checking for new mission rotation...");
 
-    // Fetch World Data
-    const worldRes = await axios.get(
-      "https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/world/info",
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-          Authorization: `Bearer ${authRes.data.access_token}`,
-        },
-      }
-    );
-    fs.writeFileSync(dailyMissionsPath, JSON.stringify(worldRes.data, null, 2));
-    console.log(
-      `[Auto-Alerts] Successfully saved mission data to ${dailyMissionsPath}`
-    );
+    // 1. Force Sync
+    await forceSyncMissions();
 
-    const { theaters, missionAlerts, missions: missionData } = worldRes.data;
-    const theaterNames: Record<string, string> = {};
-    theaters.forEach((t: any) => (theaterNames[t.uniqueId] = t.displayName.en));
+    // 2. Read Data
+    if (!fs.existsSync(CACHE_PATH))
+      return console.error("[ALERTS] No data found.");
+    const fileContent = fs.readFileSync(CACHE_PATH, "utf8");
+    const worldData = JSON.parse(fileContent);
 
+    // 3. Hash Check
+    const currentHash = getFileHash(fileContent);
+    let lastHash = "";
+    if (fs.existsSync(HASH_FILE_PATH)) {
+      lastHash = fs.readFileSync(HASH_FILE_PATH, "utf8").trim();
+    }
+
+    if (!force && currentHash === lastHash) {
+      console.log("[ALERTS] Skipped: Data has not changed.");
+      return;
+    }
+
+    console.log("[ALERTS] New rotation detected! Generating embeds...");
+
+    // --- PREPARE DATA ---
     const missionLookup = new Map();
-    missionData.forEach((theater: any) => {
-      theater.availableMissions.forEach((m: any) =>
-        missionLookup.set(`${theater.theaterId}-${m.tileIndex}`, m)
-      );
+    worldData.missions.forEach((t: any) =>
+      t.availableMissions.forEach((m: any) =>
+        missionLookup.set(`${t.theaterId}-${m.tileIndex}`, m)
+      )
+    );
+
+    const categoryResults: Record<string, Record<string, string[]>> = {};
+    ALERT_CATEGORIES.forEach((cat) => {
+      categoryResults[cat.name] = {};
     });
 
-    // Process each filter
-    for (const filter of FILTERS) {
-      const groupedResults: Record<
-        string,
-        { quantity: number; text: string }[]
-      > = {};
-      let totalSelectedReward = 0;
+    // --- SCAN MISSIONS ---
+    worldData.missionAlerts.forEach((tGroup: any) => {
+      const theaterId = tGroup.theaterId;
+      tGroup.availableMissionAlerts?.forEach((alert: any) => {
+        const mInfo = missionLookup.get(`${theaterId}-${alert.tileIndex}`);
+        if (!mInfo) return;
 
-      missionAlerts.forEach((tGroup: any) => {
-        const theaterId = tGroup.theaterId;
-        if (!tGroup.availableMissionAlerts) return;
+        const plNum = getPowerLevel(
+          theaterId,
+          mInfo.missionDifficultyInfo?.rowName || ""
+        );
+        const pl = plNum > 0 ? plNum.toString() : "??";
+        const is160 = is160Mission(pl);
 
-        tGroup.availableMissionAlerts.forEach((alert: any) => {
-          const mInfo = missionLookup.get(`${theaterId}-${alert.tileIndex}`);
-          if (!mInfo) return;
+        const rawBase = mInfo.missionRewards?.items || [];
+        const rawAlert = alert.missionAlertRewards?.items || [];
 
-          const pl = getPLFromRowName(
-            theaterId,
-            mInfo.missionDifficultyInfo?.rowName ||
-              mInfo.difficultyInfo?.rowName ||
-              ""
-          );
-          let displayItems: any[] = [];
+        const baseFiltered = rawBase.filter((i: any) => {
+          const t = i.itemType.toLowerCase();
+          return !t.includes("eventcurrency") && !t.includes("eventscaling");
+        });
+
+        const allItems = [...baseFiltered, ...rawAlert];
+
+        ALERT_CATEGORIES.forEach((category) => {
           let isMatch = false;
-          let currentMissionQuantity = 0;
+          let displayItems: any[] = [];
 
-          if (filter.value === "filter_160") {
-            if (pl === "160") {
+          if (category.filter === "filter_160") {
+            if (is160) {
               isMatch = true;
-              const rawRewards = (mInfo.missionRewards?.items || []).filter(
-                (i: any) => {
-                  const type = i.itemType.toLowerCase();
-                  return (
-                    !type.includes("gold") &&
-                    !type.includes("eventscaling") &&
-                    !type.includes("eventcurrency")
-                  );
-                }
-              );
-              const groupedRewards: Record<string, number> = {};
-              rawRewards.forEach((item: any) => {
-                groupedRewards[item.itemType] =
-                  (groupedRewards[item.itemType] || 0) + item.quantity;
-              });
-              displayItems = Object.keys(groupedRewards).map((type) => ({
-                itemType: type,
-                quantity: groupedRewards[type],
-              }));
+              displayItems = allItems;
             }
           } else {
-            const alertItems = alert.missionAlertRewards?.items || [];
-            const matchingItems = alertItems.filter((i: any) => {
-              const rawType = i.itemType.toLowerCase();
-              const cleanType = rawType.split(":").pop() || "";
-              return (
-                cleanType === filter.value.toLowerCase() ||
-                rawType.includes(filter.value.toLowerCase())
-              );
-            });
-
+            const matchingItems = rawAlert.filter((i: any) =>
+              checkRewardMatch(i.itemType, category.filter)
+            );
             if (matchingItems.length > 0) {
               isMatch = true;
-              displayItems = alertItems;
-              matchingItems.forEach(
-                (i: any) => (currentMissionQuantity += i.quantity)
-              );
+              displayItems = rawAlert;
             }
           }
 
           if (isMatch) {
-            const zone = theaterNames[theaterId] || "Unknown Zone";
-            if (!groupedResults[zone]) groupedResults[zone] = [];
-
-            let rewardText =
-              filter.value === "filter_160"
-                ? displayItems
-                    .map(
-                      (i: any) => `${i.quantity}x ${getItemEmoji(i.itemType)}`
-                    )
-                    .join(", ")
-                : displayItems
-                    .map((i: any) => formatReward(i.itemType, i.quantity))
-                    .join(", ");
-
-            if (rewardText) {
-              totalSelectedReward += currentMissionQuantity;
-              groupedResults[zone].push({
-                quantity: currentMissionQuantity,
-                text: `${getMissionEmoji(
-                  mInfo.missionGenerator
-                )} ⚡ \`${pl.padEnd(3)}\` | ${rewardText}`,
-              });
+            const zone = resolveZone(theaterId);
+            if (!categoryResults[category.name][zone]) {
+              categoryResults[category.name][zone] = [];
             }
+
+            const missionName = resolveMissionType(mInfo.missionGenerator);
+            const missionIcon = getMissionEmoji(missionName);
+            const aggregated = aggregateRewards(displayItems);
+
+            const rewardsStr = aggregated
+              .map((i: any) => {
+                const item = resolveItem(i.itemType);
+                let suffix = "";
+                let prefix = "";
+
+                if (
+                  category.filter !== "filter_160" &&
+                  checkRewardMatch(i.itemType, category.filter)
+                ) {
+                  prefix = "**";
+                  suffix = "**";
+                }
+
+                if (category.filter === "filter_160") {
+                  prefix = "**";
+                  suffix = "**";
+                  if (i.itemType.includes("reagent_c_t04_veryhigh")) {
+                    item.emoji = "<:shard:1457763923397709946>";
+                  } else if (i.itemType.includes("reagent_c_t04_high")) {
+                    item.emoji = "<:shard:1457763923397709946>";
+                    suffix += " (bad)";
+                  }
+                }
+
+                return `${prefix}${i.quantity}x${suffix} ${item.emoji}`;
+              })
+              .join(", ");
+
+            categoryResults[category.name][zone].push(
+              `${missionIcon} ⚡ \`${pl}\` | ${rewardsStr}`
+            );
           }
         });
       });
+    });
 
-      // Create and send embed
-      const zones = Object.keys(groupedResults);
+    // --- SEND EMBEDS ---
+    const dateStr = new Date().toLocaleDateString("en-GB");
+
+    for (const category of ALERT_CATEGORIES) {
+      const zoneData = categoryResults[category.name];
+      const zonesFound = Object.keys(zoneData);
+
+      // --- EMOJI RESOLUTION ---
+      // 1. Use manual emoji if provided (e.g., ⚡ for 160s)
+      // 2. Otherwise, resolve the emoji from the 'filter' ID using itemUtils
+      let titleEmoji = category.emoji;
+      if (!titleEmoji) {
+        const resolved = resolveItem(category.filter);
+        // Fallback to ? if resolution fails (shouldn't happen for valid items)
+        titleEmoji = resolved.type !== "unknown" ? resolved.emoji : "❓";
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle(`STW Alerts For: ${filter.name}`)
-        .setColor("#5865F2")
+        .setTitle(`${titleEmoji} ${category.name} Alerts:`)
         .setTimestamp();
 
-      if (zones.length > 0) {
-        embed.setFooter({
-          text: `Total Items: ${formatNumber(totalSelectedReward)}`,
-        });
-
-        zones.forEach((zone) => {
-          const sortedText = groupedResults[zone]
-            .sort((a, b) => b.quantity - a.quantity)
-            .map((m) => m.text)
-            .join("\n");
-
-          embed.addFields({
-            name: `${zone.toUpperCase()}`,
-            value: sortedText.substring(0, 1024),
-          });
-        });
+      if (zonesFound.length === 0) {
+        embed.setColor(0x2f3136);
+        embed.setDescription(
+          `❌ **No missions found for ${category.name} today.**`
+        );
       } else {
-        embed.setDescription(`❌ No missions found for **${filter.name}**.`);
-        embed.setFooter({ text: "Better luck next reset!" });
+        embed.setColor(category.color);
+
+        const sortedZones = zonesFound.sort(
+          (a, b) =>
+            ZONE_ORDER.indexOf(
+              Object.keys(THEATER_MAP).find((k) => THEATER_MAP[k] === a)!
+            ) -
+            ZONE_ORDER.indexOf(
+              Object.keys(THEATER_MAP).find((k) => THEATER_MAP[k] === b)!
+            )
+        );
+
+        let desc = "";
+        for (const zone of sortedZones) {
+          desc += `**${zone.toUpperCase()}**\n${zoneData[zone].join("\n")}\n\n`;
+        }
+
+        if (desc.length > 4000) {
+          desc = desc.substring(0, 3900) + "\n...(Truncated)";
+        }
+        embed.setDescription(desc);
       }
 
       await channel.send({ embeds: [embed] });
     }
 
-    // last_reset.json with current timestamp
-    fs.writeFileSync(
-      resetPath,
-      JSON.stringify({ lastRunTimestamp: now }, null, 2)
-    );
-    console.log(`[Auto-Alerts] Successfully posted. Cache updated.`);
-  } catch (error: any) {
-    console.error("Alert error:", error.message);
+    console.log("[ALERTS] All category embeds sent successfully.");
+    fs.writeFileSync(HASH_FILE_PATH, currentHash);
+  } catch (e) {
+    console.error("[ALERTS] Error running auto-alerts:", e);
   }
 }
