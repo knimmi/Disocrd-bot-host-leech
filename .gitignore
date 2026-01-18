@@ -29,3 +29,5 @@ src/last_alert_hash.txt
 *.txt
 src/services/idk.ts
 src/services/auto-alerts vase.ts
+src/last_alert_hash.txt
+*.txt

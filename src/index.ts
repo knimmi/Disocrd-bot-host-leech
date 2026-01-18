@@ -22,6 +22,9 @@ import {
 import { checkMilestones } from "./roles";
 import { runAutoAlerts } from "./services/auto-alerts";
 
+// --- NEW IMPORT HERE ---
+import { handlePrefixCommand } from "./prefix_handler";
+
 dotenv.config();
 
 const TOKEN = process.env.BOT_TOKEN as string;
@@ -76,6 +79,12 @@ const rest = new REST({ version: "10" }).setToken(TOKEN!);
     console.error(e);
   }
 })();
+
+// --- NEW LISTENER FOR PREFIX COMMANDS ---
+// This runs globally (in any channel) so users can check stats anywhere.
+client.on("messageCreate", async (message) => {
+  await handlePrefixCommand(message);
+});
 
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand()) return;

@@ -58,7 +58,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
       return await interaction.editReply({ files: [file] });
     }
 
-    // 2. Remove All Mods (No GUIDs)
+    // 2. Remove All Mods (No GUIDs -> Replaced with 'eee')
     if (filter === "remove_all_mods") {
       // Check Cache First
       if (fs.existsSync(CACHE_NO_MODS_PATH)) {
@@ -70,16 +70,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         // Fallback: Generate if cache missing
         console.log("Cache missing for No Mods. Generating on the fly...");
         const rawData = fs.readFileSync(CACHE_PATH, "utf-8");
-        const jsonData = JSON.parse(rawData);
 
-        if (Array.isArray(jsonData.missions)) {
-          jsonData.missions = jsonData.missions.map((mission: any) => {
-            delete mission.missionGuid;
-            return mission;
-          });
-        }
+        // Use Regex to replace all GUIDs with "eee" globally in the string
+        // This is more reliable than mapping objects if GUIDs appear in multiple places
+        const guidRegex =
+          /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+        const processedString = rawData.replace(guidRegex, "eee");
 
-        const buffer = Buffer.from(JSON.stringify(jsonData, null, 2), "utf-8");
+        const buffer = Buffer.from(processedString, "utf-8");
         const file = new AttachmentBuilder(buffer, {
           name: `world-info-no_mods-${dateSuffix}.json`,
         });
@@ -122,7 +120,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
 /**
  * Fallback: Applies the Dev Mission regex replacements
- * (Used only if cached file is missing)
  */
 function processDevMissions(data: any): any {
   let jsonString = JSON.stringify(data);

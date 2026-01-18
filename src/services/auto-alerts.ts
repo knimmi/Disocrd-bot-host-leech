@@ -333,23 +333,25 @@ export async function runAutoAlerts(
     );
 
     // B. Remove All GUIDs
+    // B. Remove All GUIDs (Replaced with 'eee')
     try {
-      const noGuidData = JSON.parse(JSON.stringify(worldData));
-      if (Array.isArray(noGuidData.missions)) {
-        noGuidData.missions = noGuidData.missions.map((mission: any) => {
-          delete mission.missionGuid;
-          return mission;
-        });
-      }
-      const noGuidString = JSON.stringify(noGuidData, null, 2);
+      const rawDataString = JSON.stringify(worldData, null, 2);
 
-      // Save to disk
-      fs.writeFileSync(CACHE_NO_GUIDS_PATH, noGuidString);
-      console.log(`[ALERTS] Cached No-GUIDs file to ${CACHE_NO_GUIDS_PATH}`);
+      // FIX: Use Regex to find GUID patterns and replace them with "eee"
+      // instead of deleting the property keys.
+      const guidRegex =
+        /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+      const processedNoGuidString = rawDataString.replace(guidRegex, "eee");
+
+      // Save the modified string to disk
+      fs.writeFileSync(CACHE_NO_GUIDS_PATH, processedNoGuidString);
+      console.log(
+        `[ALERTS] Cached No-GUIDs file (replaced with 'eee') to ${CACHE_NO_GUIDS_PATH}`
+      );
 
       // Add to attachment list
       filesToSend.push(
-        new AttachmentBuilder(Buffer.from(noGuidString, "utf-8"), {
+        new AttachmentBuilder(Buffer.from(processedNoGuidString, "utf-8"), {
           name: `world-info-no_guids-${dateSuffix}.json`,
         })
       );
